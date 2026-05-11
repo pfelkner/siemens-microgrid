@@ -18,6 +18,9 @@ siemens-microgrid/
 ├── README.md
 └── .gitignore
 ```
+## Disclaimer
+
+Currently, none of the solvers are implemented. Only the **`pv_data.py`** works, the rest is just scaffolding
 
 ## Files
 
