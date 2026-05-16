@@ -50,6 +50,11 @@ figures/
 *.jpg
 *.pdf
 !doc/*.pdf
+gurobi*.log
+*.lp
+schedule_*.csv
+results_*.csv
+data_overview.png
 
 # Solver / quantum credentials
 dwave.conf
