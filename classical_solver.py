@@ -65,6 +65,12 @@ def build_and_solve(
     soc_mid = m.addVars(T, vtype=GRB.BINARY, name="soc_mid")
     soc_high = m.addVars(T, vtype=GRB.BINARY, name="soc_high")
 
+    ch_active = m.addVars(T, vtype=GRB.BINARY, name="ch_active")
+    dis_active = m.addVars(T, vtype=GRB.BINARY, name="dis_active")
+
+    import_active = m.addVars(T, vtype=GRB.BINARY, name="import_active")
+    export_active = m.addVars(T, vtype=GRB.BINARY, name="export_active")
+
     served = m.addVars(outage_slots, vtype=GRB.BINARY, name="served")
 
     # ---------- Constraints ----------
@@ -116,6 +122,16 @@ def build_and_solve(
                                    + FRAC_MID * soc_mid[t])
         m.addConstr(bess_ch[t] <= max_power_t, name=f"ch_band_{t}")
         m.addConstr(bess_dis[t] <= max_power_t, name=f"dis_band_{t}")
+
+        # XOR: mutual exclusion between charge and discharge
+        m.addConstr(bess_ch[t]  <= BESS_PMAX * ch_active[t],  name=f"ch_link_{t}")
+        m.addConstr(bess_dis[t] <= BESS_PMAX * dis_active[t], name=f"dis_link_{t}")
+        m.addConstr(ch_active[t] + dis_active[t] <= 1,        name=f"xor_bess_{t}")
+
+        # XOR: mutual exclusion between grid import and export
+        m.addConstr(grid_in[t]  <= GRID_PMAX * import_active[t], name=f"imp_link_{t}")
+        m.addConstr(grid_out[t] <= GRID_PMAX * export_active[t], name=f"exp_link_{t}")
+        m.addConstr(import_active[t] + export_active[t] <= 1,    name=f"xor_grid_{t}")
 
         # Demand charge tracking
         m.addConstr(peak_import >= grid_in[t], name=f"peak_{t}")
@@ -220,10 +236,11 @@ def run_sanity_checks(schedule: pd.DataFrame, tol: float = 1e-4) -> tuple[list[s
     if (outage & (schedule["Grid_Export"].abs() > tol)).any():
         errors.append("Grid_Export nonzero during outage")
 
-    both = (schedule["BESS_Charge"] > tol) & (schedule["BESS_Discharge"] > tol)
-    if both.any():
-        warnings.append(f"WARN: {int(both.sum())} slot(s) have both charge and discharge "
-                        f"nonzero (degenerate optimum, economically suspicious)")
+    both_nonzero = ((schedule["BESS_Charge"] > tol) &
+                    (schedule["BESS_Discharge"] > tol)).sum()
+    if both_nonzero > 0:
+        errors.append(f"VIOLATION: {both_nonzero} slot(s) have simultaneous "
+                      f"charge+discharge — XOR constraint not enforced correctly")
 
     return errors, warnings
 
