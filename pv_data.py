@@ -70,7 +70,7 @@ def simulate_pv_park(
     df_15min = df.resample("15min").interpolate()
 
     start = pd.Timestamp(start_date, tz=tz)
-    end = pd.Timestamp(end_date, tz=tz) + pd.Timedelta(hours=23, minutes=45)
+    end = pd.Timestamp(end_date, tz=tz) - pd.Timedelta(minutes=15)
     desired_index = pd.date_range(start=start, end=end, freq="15min")
     repeats = int(len(desired_index) / len(df_15min)) + 2
     extended = pd.concat([df_15min] * repeats)
@@ -99,7 +99,7 @@ def build_pv_profile(
 
 
 def build_load_profile(start_date: str, end_date: str) -> pd.DataFrame:
-    timestamps = pd.date_range(start_date, end_date, freq="15min")
+    timestamps = pd.date_range(start_date, end_date, freq="15min", inclusive="left")
     hours = timestamps.hour.to_numpy() + timestamps.minute.to_numpy() / 60
     rng = np.random.default_rng(seed=0)
     load = (
@@ -111,7 +111,7 @@ def build_load_profile(start_date: str, end_date: str) -> pd.DataFrame:
 
 
 def build_tou_tariffs(start_date: str, end_date: str) -> pd.DataFrame:
-    timestamps = pd.date_range(start_date, end_date, freq="15min")
+    timestamps = pd.date_range(start_date, end_date, freq="15min", inclusive="left")
     hours = timestamps.hour
     tou = np.where(
         (hours >= 22) | (hours < 6),
@@ -124,7 +124,7 @@ def build_tou_tariffs(start_date: str, end_date: str) -> pd.DataFrame:
 def build_grid_availability(
     start_date: str, end_date: str, outage_prob: float = 0.005
 ) -> pd.DataFrame:
-    timestamps = pd.date_range(start_date, end_date, freq="15min")
+    timestamps = pd.date_range(start_date, end_date, freq="15min", inclusive="left")
     rng = np.random.default_rng(seed=42)
     available = (rng.random(len(timestamps)) > outage_prob).astype(int)
     return pd.DataFrame({"timestamp": timestamps, "grid_available": available})
@@ -156,7 +156,8 @@ def main() -> None:
     parser.add_argument("--lat", type=float, default=NM_LAT)
     parser.add_argument("--lon", type=float, default=NM_LON)
     parser.add_argument("--start-date", type=str, default="2025-06-01")
-    parser.add_argument("--end-date", type=str, default="2025-06-30")
+    parser.add_argument("--end-date", type=str, default="2025-07-01",
+                        help="Exclusive end date (last slot is end_date - 15min)")
     parser.add_argument("--tilt", type=float, default=20)
     parser.add_argument("--azimuth", type=float, default=180)
     parser.add_argument("--output-dir", type=Path, default=None)
