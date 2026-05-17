@@ -64,4 +64,4 @@ dwave.conf
 .env.*
 
 # AI Stuff
-Claude.MD
+CLAUDE.md
