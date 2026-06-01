@@ -77,6 +77,11 @@ $$H_\text{res} = \lambda_\text{res} \sum_{t: g(t)=0} \big( I(t)^2 + E(t)^2 \big)
 
 $$H_\text{cost} = \sum_t c_\text{ToU}(t)\, I(t) - \sum_t c_\text{export}(t)\, E(t) + c_\text{demand}\, P_\text{peak} - r_\text{res} \sum_{t: g(t)=0} \mathbb{1}[\text{islanded}]$$
 
+**Parameter values** (identical to the classical MILP so that $\rho = C_\text{quantum}/C_\text{classical}$ is meaningful):
+- $c_\text{export} = 0.05$ \$/kWh (export tariff — equals the off-peak ToU rate; battery→grid arbitrage does not pay due to 10% round-trip loss)
+- $r_\text{res} = 225$ \$/slot ($15/min × 15 min$; band: 150–300 \$/slot for 10–20 \$/min)
+- $c_\text{demand} = 15$ \$/kW (billing-period peak import charge)
+
 Combine:
 $$H = H_\text{cost} + H_\text{bal} + H_\text{soc} + H_\text{xor} + H_\text{res}$$
 

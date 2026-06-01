@@ -37,7 +37,8 @@ The following datasets must be prepared. Where real measurements are unavailable
 | BESS max charge/discharge power | 250 kW |
 | BESS round-trip efficiency | 0.90 (√0.90 per direction) |
 | Initial SoC | 500 kWh |
-| Resiliency revenue rate | $0.10/min of islanded operation |
+| Resiliency revenue rate | $15/min of islanded operation = $225/slot (band: $10–20/min) |
+| Export tariff | $0.05/kWh paid for grid export |
 
 All time series are merged into a single `all_data.csv` keyed on `timestamp` (tz-naive UTC offset removed, local Mountain Time assumed throughout).
 

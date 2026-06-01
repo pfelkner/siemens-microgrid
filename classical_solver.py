@@ -26,7 +26,9 @@ ETA_RT = 0.90                   # round-trip efficiency
 ETA = math.sqrt(ETA_RT)         # per-direction efficiency
 SOC_INIT = 500.0                # kWh
 DEMAND_CHARGE = 15.0            # $/kW over billing period
-RESILIENCY_PER_SLOT = 1.50      # $ per served outage slot ($0.10/min * 15 min)
+RESILIENCY_PER_MIN  = 15.0                      # $/min (band 10–20)
+RESILIENCY_PER_SLOT = RESILIENCY_PER_MIN * 15.0 # $ per served 15-min outage slot = 225.0
+EXPORT_RATE         = 0.05                       # $/kWh paid for grid export
 GRID_PMAX = 1000.0              # kW (sanity cap)
 SOC_LOW_TH = 100.0              # kWh (10% of 1000)
 SOC_HIGH_TH = 900.0             # kWh (90% of 1000)
@@ -41,6 +43,8 @@ def build_and_solve(
     mip_gap: float,
     log_file: str,
     quiet: bool,
+    resiliency_per_slot: float = RESILIENCY_PER_SLOT,
+    export_rate: float = EXPORT_RATE,
 ) -> tuple[gp.Model, dict, list[pd.DataFrame]]:
     """Build and solve the (stochastic) MILP.
 
@@ -145,10 +149,17 @@ def build_and_solve(
     )
     demand_cost = DEMAND_CHARGE * peak_import   # NOT weighted — first-stage variable
     resiliency_revenue = gp.quicksum(
-        probs[s] * RESILIENCY_PER_SLOT * served[s][t]
+        probs[s] * resiliency_per_slot * served[s][t]
         for s in range(M) for t in outages[s]
     )
-    m.setObjective(energy_cost + demand_cost - resiliency_revenue, GRB.MINIMIZE)
+    export_revenue = gp.quicksum(
+        probs[s] * export_rate * grid_out[s][t] * DT
+        for s in range(M) for t in range(T)
+    )
+    m.setObjective(
+        energy_cost + demand_cost - resiliency_revenue - export_revenue,
+        GRB.MINIMIZE,
+    )
 
     m.update()
     n_vars   = m.NumVars
@@ -183,8 +194,12 @@ def build_and_solve(
     ))
     demand_cost_v = float(DEMAND_CHARGE * peak_import.X)
     resiliency_v  = float(sum(
-        probs[s] * RESILIENCY_PER_SLOT * served[s][t].X
+        probs[s] * resiliency_per_slot * served[s][t].X
         for s in range(M) for t in outages[s]
+    ))
+    export_revenue_v = float(sum(
+        probs[s] * export_rate * grid_out[s][t].X * DT
+        for s in range(M) for t in range(T)
     ))
     served_count = int(round(sum(
         sum(served[s][t].X for t in outages[s]) for s in range(M)
@@ -205,6 +220,7 @@ def build_and_solve(
         "energy_cost":      energy_cost_v,
         "demand_cost":      demand_cost_v,
         "resiliency_revenue": resiliency_v,
+        "export_revenue":   export_revenue_v,
         "peak_import_kw":   float(peak_import.X),
         "served_count":     served_count,
         "outage_slots":     len(outages[0]),
@@ -275,7 +291,7 @@ def append_summary(out_path: Path, row: dict) -> None:
         "slots", "n_scenarios", "mode",
         "n_vars", "n_binary_vars", "n_constraints",
         "runtime_s", "status", "mip_gap", "objective_bound",
-        "total_cost", "energy_cost", "demand_cost", "resiliency_revenue",
+        "total_cost", "energy_cost", "demand_cost", "resiliency_revenue", "export_revenue",
     ]
     df_row = pd.DataFrame([{
         "slots":              row["T"],
@@ -292,6 +308,7 @@ def append_summary(out_path: Path, row: dict) -> None:
         "energy_cost":        row["energy_cost"],
         "demand_cost":        row["demand_cost"],
         "resiliency_revenue": row["resiliency_revenue"],
+        "export_revenue":     row.get("export_revenue", 0.0),
     }])[cols]
     header = not out_path.exists()
     df_row.to_csv(out_path, mode="a", header=header, index=False)
@@ -309,6 +326,10 @@ def main() -> int:
                    help="PV AR(1) noise std (fraction of forecast value)")
     p.add_argument("--load-sigma",     type=float, default=0.05,
                    help="Load AR(1) noise std (fraction of forecast value)")
+    p.add_argument("--resiliency-per-min", type=float, default=RESILIENCY_PER_MIN,
+                   help="Resiliency revenue in $/min (band 10–20; use 0.10 for pre-patch behavior)")
+    p.add_argument("--export-rate",    type=float, default=EXPORT_RATE,
+                   help="Export tariff in $/kWh (use 0.0 for pre-patch behavior)")
     p.add_argument("--time-limit",     type=float, default=None)
     p.add_argument("--mip-gap",        type=float, default=1e-4)
     p.add_argument("--out-schedule",   default="schedule_classical.csv")
@@ -345,6 +366,8 @@ def main() -> int:
         mip_gap=args.mip_gap,
         log_file=str(log_path),
         quiet=args.quiet,
+        resiliency_per_slot=args.resiliency_per_min * 15.0,
+        export_rate=args.export_rate,
     )
 
     # ---------- Write schedules ----------
@@ -400,7 +423,8 @@ def main() -> int:
             f"runtime={info['runtime_s']:.2f}s gap={info['mip_gap']:.2e} "
             f"total=${info['total_cost']:.2f} "
             f"(energy=${info['energy_cost']:.2f} + demand=${info['demand_cost']:.2f} "
-            f"- resiliency=${info['resiliency_revenue']:.2f}) "
+            f"- resiliency=${info['resiliency_revenue']:.2f} "
+            f"- export=${info['export_revenue']:.2f}) "
             f"served={info['served_count']}/{info['outage_slots']}"
         )
 
