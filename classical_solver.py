@@ -326,6 +326,8 @@ def main() -> int:
                    help="PV AR(1) noise std (fraction of forecast value)")
     p.add_argument("--load-sigma",     type=float, default=0.05,
                    help="Load AR(1) noise std (fraction of forecast value)")
+    p.add_argument("--homogeneous",     action="store_true",
+                   help="Use constant-sigma AR(1) scenarios (Step-3 back-compat)")
     p.add_argument("--resiliency-per-min", type=float, default=RESILIENCY_PER_MIN,
                    help="Resiliency revenue in $/min (band 10–20; use 0.10 for pre-patch behavior)")
     p.add_argument("--export-rate",    type=float, default=EXPORT_RATE,
@@ -353,6 +355,7 @@ def main() -> int:
             pv_noise_sigma=args.pv_sigma,
             load_noise_sigma=args.load_sigma,
             seed=args.scenarios_seed,
+            homogeneous=args.homogeneous,
         )
 
     log_path = Path(args.gurobi_log)
