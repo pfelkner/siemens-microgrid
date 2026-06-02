@@ -45,11 +45,16 @@ def build_and_solve(
     quiet: bool,
     resiliency_per_slot: float = RESILIENCY_PER_SLOT,
     export_rate: float = EXPORT_RATE,
+    soc_init: float = SOC_INIT,
+    peak_floor: float = 0.0,
 ) -> tuple[gp.Model, dict, list[pd.DataFrame]]:
     """Build and solve the (stochastic) MILP.
 
     M=1 is the degenerate deterministic case; the model structure is identical
     to the old single-scenario code, just written via the scenario loop.
+
+    soc_init:   starting SoC for t=0 (default SOC_INIT reproduces full-horizon behaviour).
+    peak_floor: lower bound on peak_import — carries the running monthly peak into window solves.
     """
     M = len(df_list)
     T = len(df_list[0])
@@ -69,7 +74,7 @@ def build_and_solve(
         m.Params.TimeLimit = time_limit
 
     # ---------- First-stage variable (shared across all scenarios) ----------
-    peak_import = m.addVar(lb=0.0, ub=GRID_PMAX, name="peak_import")
+    peak_import = m.addVar(lb=peak_floor, ub=GRID_PMAX, name="peak_import")
 
     # ---------- Second-stage variables (per scenario) ----------
     # For M=1, names match the old deterministic solver for log readability.
@@ -108,7 +113,7 @@ def build_and_solve(
                 m.addConstr( resid <= M_big * (1 - served[s][t]), name=f"{q}out_bal_up_{t}")
                 m.addConstr(-resid <= M_big * (1 - served[s][t]), name=f"{q}out_bal_lo_{t}")
 
-            soc_prev = SOC_INIT if t == 0 else soc_v[s][t - 1]
+            soc_prev = soc_init if t == 0 else soc_v[s][t - 1]
             m.addConstr(
                 soc_v[s][t] == soc_prev + ETA * bess_ch[s][t] * DT
                               - (bess_dis[s][t] / ETA) * DT,
