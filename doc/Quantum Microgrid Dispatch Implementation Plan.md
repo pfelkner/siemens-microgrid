@@ -35,11 +35,13 @@ This is the heart of the quantum approach. Every continuous decision variable mu
 
 | Parameter | Symbol | Value |
 |-----------|--------|-------|
-| Horizon | $T$ | 24 slots (1 h each) |
+| Horizon (MPC window) | $T$ | **72 slots (hourly, 3-day window)** — see Step 4 Rolling-Horizon |
 | Encoding bits per power variable | $K$ | 4 (16 levels) |
 | Power resolution | $\Delta P$ | $P_{\max}/(2^K - 1) = 250/15 \approx 16.7$ kW |
 | Logical qubits per slot | — | $4K = 16$ |
-| **Total logical qubits** | $n$ | $T \times 4K = 384$ |
+| **Total logical qubits (window)** | $n$ | $T \times 4K = \mathbf{288}$ |
+
+**Update (Step 4):** The 30-day horizon is no longer solved in one shot. The quantum solver acts as the MPC *window kernel*, solving one 3-day (72-slot hourly / 288-slot 15-min) problem per day. The 30-day result is assembled from ≈28–30 window solves. This reduces the qubit budget from 384 (old 24-slot estimate) to **~96–288 logical qubits** — comfortably tractable on D-Wave Hybrid and at moderate QAOA depth.
 
 The four power variables per slot are `Grid_Import`, `Grid_Export`, `BESS_Charge`, `BESS_Discharge`. The `BESS_SoC` is **not** encoded as an independent variable — it is reconstructed from the cumulative charge/discharge sum, which keeps the qubit count linear in $T$ and turns the BESS dynamics constraint into a derived expression rather than an equality.
 
@@ -76,6 +78,11 @@ $$H_\text{res} = \lambda_\text{res} \sum_{t: g(t)=0} \big( I(t)^2 + E(t)^2 \big)
 ### Phase 2.4: Objective in QUBO Form
 
 $$H_\text{cost} = \sum_t c_\text{ToU}(t)\, I(t) - \sum_t c_\text{export}(t)\, E(t) + c_\text{demand}\, P_\text{peak} - r_\text{res} \sum_{t: g(t)=0} \mathbb{1}[\text{islanded}]$$
+
+**Parameter values** (identical to the classical MILP so that $\rho = C_\text{quantum}/C_\text{classical}$ is meaningful):
+- $c_\text{export} = 0.05$ \$/kWh (export tariff — equals the off-peak ToU rate; battery→grid arbitrage does not pay due to 10% round-trip loss)
+- $r_\text{res} = 225$ \$/slot ($15/min × 15 min$; band: 150–300 \$/slot for 10–20 \$/min)
+- $c_\text{demand} = 15$ \$/kW (billing-period peak import charge)
 
 Combine:
 $$H = H_\text{cost} + H_\text{bal} + H_\text{soc} + H_\text{xor} + H_\text{res}$$
