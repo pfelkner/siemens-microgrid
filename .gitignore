@@ -16,6 +16,7 @@ dist/
 *.egg-info/
 *.egg
 pip-wheel-metadata/
+uv.lock
 
 # Editor / IDE
 .idea/
