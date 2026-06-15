@@ -17,9 +17,11 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -29,54 +31,75 @@ from qubo_model import SOC_INIT, build_qubo, decode, evaluate
 
 _COLORS = {
     "pv":       "#f9c74f",
-    "load":     "#264653",
-    "import":   "#e76f51",
+    "load":     "#1a1a5e",
+    "import":   "#457b9d",
     "export":   "#2a9d8f",
-    "bess_ch":  "#457b9d",
-    "bess_dis": "#a8dadc",
-    "soc":      "#6a0572",
+    "bess_ch":  "#e76f51",
+    "bess_dis": "#52b788",
+    "tou":      "#e63946",
 }
 
 
-def _ts_axis(ax: plt.Axes, schedule: pd.DataFrame) -> None:
+def plot_schedule(
+    schedule: pd.DataFrame,
+    df_input: pd.DataFrame,
+    title: str,
+    out_path: str,
+) -> None:
+    """Stacked-area dispatch plot with dual y-axis ToU price."""
     n = len(schedule)
-    ax.set_xlim(0, n)
-    step = max(1, n // 8)
-    ticks = list(range(0, n, step))
-    if n - 1 not in ticks:
-        ticks.append(n - 1)
-    ax.set_xticks(ticks)
-    ax.set_xticklabels(
-        [f"{(i * 15) // 60:02d}:{(i * 15) % 60:02d}" for i in ticks],
-        fontsize=7, rotation=45)
+    has_ts = "timestamp" in df_input.columns
+    if has_ts:
+        t = pd.to_datetime(df_input["timestamp"].iloc[:n].values)
+    else:
+        t = np.arange(n)
 
+    tou = df_input["tou_usd_kwh"].iloc[:n].to_numpy()
 
-def plot_schedule(schedule: pd.DataFrame, title: str, out_path: str) -> None:
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-    t = np.arange(len(schedule))
-    lw = 1.2
+    fig, ax = plt.subplots(figsize=(14, 5))
 
-    ax.plot(t, schedule["p_pv_kw"],        color=_COLORS["pv"],      lw=lw, label="PV")
-    ax.plot(t, schedule["p_load_kw"],       color=_COLORS["load"],    lw=lw, linestyle="--", label="Load")
-    ax.plot(t, schedule["Grid_Import"],     color=_COLORS["import"],  lw=lw, label="Grid Import")
-    ax.plot(t, -schedule["Grid_Export"],    color=_COLORS["export"],  lw=lw, label="Grid Export (neg)")
-    ax.plot(t, schedule["BESS_Charge"],     color=_COLORS["bess_ch"], lw=lw, label="BESS Charge")
-    ax.plot(t, -schedule["BESS_Discharge"], color=_COLORS["bess_dis"],lw=lw, label="BESS Dis (neg)")
-    ax.axhline(0, color="black", lw=0.5)
-    ax.set_title(title, fontsize=9, fontweight="bold")
-    ax.set_ylabel("kW", fontsize=8)
-    _ts_axis(ax, schedule)
+    ax.stackplot(
+        t,
+        schedule["Grid_Import"].to_numpy(),
+        schedule["BESS_Discharge"].to_numpy(),
+        schedule["p_pv_kw"].to_numpy(),
+        schedule["Grid_Export"].to_numpy(),
+        labels=["Grid Import", "BESS Discharge", "PV", "Grid Export"],
+        colors=[_COLORS["import"], _COLORS["bess_dis"], _COLORS["pv"], _COLORS["export"]],
+        alpha=0.85,
+    )
+
+    ax.fill_between(
+        t, -schedule["BESS_Charge"].to_numpy(), 0,
+        label="BESS Charge", color=_COLORS["bess_ch"], alpha=0.80,
+    )
+
+    ax.plot(t, schedule["p_load_kw"].to_numpy(),
+            color=_COLORS["load"], lw=1.8, label="Load")
+
+    ax.axhline(0, color="gray", lw=0.6)
+    ax.set_ylabel("Power (kW)", fontsize=10)
+    ax.set_title(title, fontsize=12, fontweight="bold")
 
     ax2 = ax.twinx()
-    ax2.fill_between(t, schedule["BESS_SoC"], alpha=0.15, color=_COLORS["soc"])
-    ax2.plot(t, schedule["BESS_SoC"], color=_COLORS["soc"], lw=lw, linestyle=":")
-    ax2.set_ylabel("SoC (kWh)", fontsize=8, color=_COLORS["soc"])
-    ax2.tick_params(axis="y", labelcolor=_COLORS["soc"], labelsize=7)
-    ax2.set_ylim(0, 1050)
+    ax2.step(t, tou, where="post",
+             color=_COLORS["tou"], lw=1.2, linestyle="--", alpha=0.8)
+    ax2.set_ylabel("ToU price ($/kWh)", fontsize=9, color=_COLORS["tou"])
+    ax2.tick_params(axis="y", labelcolor=_COLORS["tou"])
+    ax2.set_ylim(bottom=0)
+
+    if has_ts:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d\n%H:%M"))
+        ax.xaxis.set_major_locator(mdates.HourLocator(interval=6))
+        fig.autofmt_xdate(rotation=0, ha="center")
+
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    ax.grid(axis="x", linestyle="--", alpha=0.35)
 
     handles, labels = ax.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=4,
-               fontsize=7, bbox_to_anchor=(0.5, -0.02))
+    ax.legend(handles, labels, loc="upper left", ncol=3, fontsize=8, framealpha=0.85)
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -203,7 +226,7 @@ def run_rolling(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="D-Wave SA rolling MPC for microgrid dispatch")
-    p.add_argument("--data",             default="all_data.csv")
+    p.add_argument("--data",             default="artifacts/data/all_data.csv")
     p.add_argument("--bits",             type=int,   default=4)
     p.add_argument("--window",           type=int,   default=288,
                    help="forecast horizon in slots (default 288 = 3 days)")
@@ -224,9 +247,11 @@ def main() -> int:
     p.add_argument("--lam-soc",          type=float, default=1.0)
     p.add_argument("--lam-peak",         type=float, default=1.0)
     p.add_argument("--lam-xor",          type=float, default=0.5)
-    p.add_argument("--out-schedule",     default="schedule_annealer.csv")
-    p.add_argument("--out-plot",         default="schedule_annealer.png")
     args = p.parse_args()
+
+    out_schedule = Path("artifacts/results/schedule_annealer.csv")
+    out_plot     = Path("artifacts/results/schedule_annealer.png")
+    out_schedule.parent.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(args.data)
     total = args.total_slots or len(df)
@@ -250,7 +275,7 @@ def main() -> int:
         lam_peak=args.lam_peak,
         lam_xor=args.lam_xor,
     )
-    schedule.to_csv(args.out_schedule, index=False)
+    schedule.to_csv(out_schedule, index=False)
 
     from qubo_model import DEMAND_CHARGE, EXPORT_RATE
     tou      = df["tou_usd_kwh"].to_numpy()
@@ -260,9 +285,9 @@ def main() -> int:
     cost     = energy + DEMAND_CHARGE * peak - export
     print(f"[result] total_cost=${cost:.2f}  energy=${energy:.2f}  "
           f"demand=${DEMAND_CHARGE * peak:.2f}  export=${export:.2f}  peak={peak:.1f}kW")
-    print(f"[output] {args.out_schedule}")
+    print(f"[output] {out_schedule}")
 
-    plot_schedule(schedule, f"D-Wave SA rolling MPC — ${cost:.2f}", args.out_plot)
+    plot_schedule(schedule, df, f"D-Wave SA rolling MPC — ${cost:.2f}", out_plot)
     return 0
 
 
