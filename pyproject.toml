@@ -1,0 +1,23 @@
+[project]
+name = "siemens-microgrid"
+version = "0.1.0"
+description = "QUBO formulation for microgrid dispatch"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pandas",
+    "dimod",
+    "pvlib",
+    "dwave-system",
+    "matplotlib>=3.9.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+]
