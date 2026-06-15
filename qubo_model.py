@@ -169,7 +169,7 @@ def build_qubo(
     tou = df["tou_usd_kwh"].to_numpy(dtype=float)
     g_avail = df["grid_available"].to_numpy(dtype=int)
 
-    tou_max = float(tou.max()) if tou.max() > 0 else 1.0
+    tou_max = float(np.abs(tou).max()) if np.abs(tou).max() > 0 else 1.0
     _moc = _max_obj_coeff(bits_grid, demand_charge, tou_max, export_rate, resiliency_rate)
     _lam = 2.0 * _moc
 

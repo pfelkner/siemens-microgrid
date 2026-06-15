@@ -56,7 +56,7 @@ def plot_schedule(
 
     tou = df_input["tou_usd_kwh"].iloc[:n].to_numpy()
 
-    fig, ax = plt.subplots(figsize=(14, 5))
+    fig, ax = plt.subplots(figsize=(14, 6))
 
     ax.stackplot(
         t,
@@ -86,7 +86,17 @@ def plot_schedule(
              color=_COLORS["tou"], lw=1.2, linestyle="--", alpha=0.8)
     ax2.set_ylabel("ToU price ($/kWh)", fontsize=9, color=_COLORS["tou"])
     ax2.tick_params(axis="y", labelcolor=_COLORS["tou"])
-    ax2.set_ylim(bottom=0)
+
+    # align zero of both y-axes so negative prices map correctly onto the power axis
+    y1_lo, y1_hi = ax.get_ylim()
+    y2_lo, y2_hi = ax2.get_ylim()
+    span1, span2 = y1_hi - y1_lo, y2_hi - y2_lo
+    frac1 = -y1_lo / span1   # fraction of zero from bottom on power axis
+    frac2 = -y2_lo / span2
+    if frac1 > frac2:
+        ax2.set_ylim(bottom=-y2_hi * frac1 / (1.0 - frac1))
+    else:
+        ax.set_ylim(bottom=-y1_hi * frac2 / (1.0 - frac2))
 
     if has_ts:
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d\n%H:%M"))
@@ -245,6 +255,7 @@ def main() -> int:
     out_schedule.parent.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(args.data)
+    df = df.iloc[96:].reset_index(drop=True)   # skip zero-PV first day (TMY tz offset artifact)
     total = args.total_slots or len(df)
     df = df.iloc[:total].reset_index(drop=True)
     print(f"[rolling] dataset={len(df)} slots  window={args.window}  step={args.step}")
