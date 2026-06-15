@@ -57,6 +57,8 @@ schedule_*.csv
 results_*.csv
 data_overview.png
 
+docs/
+
 # Solver / quantum credentials
 dwave.conf
 .dwrc
