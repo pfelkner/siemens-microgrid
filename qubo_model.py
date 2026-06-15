@@ -13,8 +13,8 @@ MILP -> QUBO transformation:
      Box bounds (B.3) satisfied by construction.
   2. Equalities (balance, SoC dynamics, SoC-band one-hot, derating, outage
      balance) -> quadratic penalty lam * (expr)^2.
-  3. Inequalities -> equality with binary-encoded slack, then squared penalty:
-     used for peak (B.4), power derating (B.5), and outage balance (B.7).
+  3. Inequalities -> (B.4, B.5) Unbalanced Penalization: lam1*h + lam2*h² without
+     slack vars; (B.7) equality with binary-encoded slack + squared penalty.
   4. XOR constraints -> native quadratic product penalty
      lam * P_ch(x) * P_dis(x) (no indicator binaries, no Big-M).
   5. Linear objective terms sit on the QUBO diagonal; resiliency reward -r*y_t
@@ -89,6 +89,26 @@ def add_squared_penalty(
     bqm.offset += lam * const * const
 
 
+def add_up_penalty(
+    bqm: dimod.BinaryQuadraticModel,
+    terms: dict[str, float],
+    const: float,
+    lam1: float,
+    lam2: float,
+) -> None:
+    """Unbalanced Penalization for h(x) ≤ 0, h = sum_i a_i x_i + const.
+
+    P(h) = lam1*h + lam2*h^2.  Minimum at h* = -lam1/(2*lam2) < 0 — inside
+    feasible region.  Condition: lam1 < 2*lam2*M (M = max |violation|).
+    lam1 is typically set to lam2 * encoding_step so the minimum sits ~1
+    quantization level inside the feasible region.
+    """
+    for v, a in terms.items():
+        bqm.add_linear(v, lam1 * a)
+    bqm.offset += lam1 * const
+    add_squared_penalty(bqm, terms, const, lam2)
+
+
 def add_product_penalty(
     bqm: dimod.BinaryQuadraticModel,
     terms_a: dict[str, float],
@@ -102,6 +122,29 @@ def add_product_penalty(
 
 
 # ---------- Model builder (backend-neutral) ----------
+def _max_obj_coeff(
+    bits_grid: int,
+    demand_charge: float,
+    tou_max: float,
+    export_rate: float,
+    resiliency_rate: float,
+) -> float:
+    """Exact maximum objective coefficient across all QUBO objective terms.
+
+    Used to set lambda = 2 * _max_obj_coeff (Bakó condition) and as the
+    normalization divisor for bqm.scale(), putting all objective coefficients
+    in [-1, 1] with lambda_eff = 2.0.
+    """
+    step_grid = GRID_PMAX / (2 ** bits_grid - 1)
+    msb_grid  = step_grid * (2 ** (bits_grid - 1))
+    return max(
+        demand_charge * msb_grid,
+        tou_max * DT * msb_grid,
+        export_rate * DT * msb_grid,
+        resiliency_rate,
+    )
+
+
 def build_qubo(
     df: pd.DataFrame,
     bits_grid: int = 4,
@@ -110,15 +153,13 @@ def build_qubo(
     soc_init: float = SOC_INIT,
     demand_charge: float = DEMAND_CHARGE,
     export_rate: float = EXPORT_RATE,
-    lam_balance: float = 1.0,
-    lam_soc: float = 1.0,
-    lam_peak: float = 1.0,
-    lam_xor: float = 0.5,
-    lam_derating: float = 1.0,
-    lam_resilience: float = 1.0,
     resiliency_rate: float = RESILIENCY_PER_SLOT,
 ) -> tuple[dimod.BinaryQuadraticModel, dict]:
     """Build the core-model QUBO as a dimod BQM.
+
+    All objective coefficients are normalized to [-1, 1] via bqm.scale(1/_moc)
+    where _moc = _max_obj_coeff(...). Lambda = 2.0 * _moc satisfies the Bakó
+    condition (constraint violation always costlier than max objective gain).
 
     Returns (bqm, ctx) where ctx holds the encodings needed to decode samples.
     """
@@ -128,21 +169,29 @@ def build_qubo(
     tou = df["tou_usd_kwh"].to_numpy(dtype=float)
     g_avail = df["grid_available"].to_numpy(dtype=int)
 
+    tou_max = float(tou.max()) if tou.max() > 0 else 1.0
+    _moc = _max_obj_coeff(bits_grid, demand_charge, tou_max, export_rate, resiliency_rate)
+    _lam = 2.0 * _moc
+
+    lam_balance   = _lam
+    lam_soc       = _lam
+    lam_peak      = _lam
+    lam_xor       = 4.0 * _lam
+    lam_derating  = _lam
+    lam_resilience = _lam
+
     bqm = dimod.BinaryQuadraticModel(dimod.BINARY)
 
-    grid_in, grid_out, bess_ch, bess_dis, soc, pk_slack = {}, {}, {}, {}, {}, {}
-    der_ch, der_dis, b7_up, b7_lo = {}, {}, {}, {}
+    grid_in, grid_out, bess_ch, bess_dis, soc = {}, {}, {}, {}, {}
+    b7_up, b7_lo = {}, {}
     _vmax_b7 = 2.0 * (BESS_PMAX + GRID_PMAX)   # max B.7 slack value
     for t in range(T):
         if g_avail[t] == 1:
             grid_in[t] = Encoding(f"grid_in_{t}", GRID_PMAX, bits_grid)
             grid_out[t] = Encoding(f"grid_out_{t}", GRID_PMAX, bits_grid)
-            pk_slack[t] = Encoding(f"pk_slack_{t}", GRID_PMAX, bits_grid)
         bess_ch[t] = Encoding(f"bess_ch_{t}", BESS_PMAX, bits_bess)
         bess_dis[t] = Encoding(f"bess_dis_{t}", BESS_PMAX, bits_bess)
         soc[t] = Encoding(f"soc_{t}", BESS_CAP, bits_soc)
-        der_ch[t] = Encoding(f"der_ch_{t}", BESS_PMAX, bits_bess)
-        der_dis[t] = Encoding(f"der_dis_{t}", BESS_PMAX, bits_bess)
         if g_avail[t] == 0:
             b7_up[t] = Encoding(f"b7_up_{t}", _vmax_b7, bits_grid)
             b7_lo[t] = Encoding(f"b7_lo_{t}", _vmax_b7, bits_grid)
@@ -158,11 +207,11 @@ def build_qubo(
     for t in range(T):
         if g_avail[t] == 1:
             for v, c in grid_in[t].coeffs.items():
-                bqm.add_linear(v, tou[t] * DT * c)            # energy cost
+                bqm.add_linear(v, tou[t] * DT * c)                    # energy cost
             for v, c in grid_out[t].coeffs.items():
-                bqm.add_linear(v, -export_rate * DT * c)      # export revenue
+                bqm.add_linear(v, -export_rate * DT * c)              # export revenue
     for v, c in peak.coeffs.items():
-        bqm.add_linear(v, demand_charge * c)                  # demand charge
+        bqm.add_linear(v, demand_charge * c)                          # demand charge
 
     # ----- Constraints as penalties -----
     for t in range(T):
@@ -208,11 +257,10 @@ def build_qubo(
         if g_avail[t] == 1:
             add_product_penalty(bqm, grid_in[t].coeffs, grid_out[t].coeffs, lam_xor)
 
-            # B.4 peak coupling: peak - grid_in[t] - slack_t = 0
-            terms = dict(peak.coeffs)
-            terms.update({v: -c for v, c in grid_in[t].coeffs.items()})
-            terms.update({v: -c for v, c in pk_slack[t].coeffs.items()})
-            add_squared_penalty(bqm, terms, 0.0, lam_peak)
+            # B.4 peak coupling: grid_in[t] ≤ peak  (UP, no slack)
+            h_pk: dict[str, float] = dict(grid_in[t].coeffs)
+            h_pk.update({v: -c for v, c in peak.coeffs.items()})
+            add_up_penalty(bqm, h_pk, 0.0, lam_peak * grid_in[t].step, lam_peak)
 
         # B.5 SoC-band assignment + power derating:
         #   b_low+b_mid+b_high=1,  P_ch/dis ≤ 0.5*P_nom*(1+b_mid)
@@ -225,14 +273,17 @@ def build_qubo(
         for v, c in soc[t].coeffs.items():
             bqm.add_quadratic(bh, v, -_lam_soc_link * c)
         bqm.add_linear(bh, _lam_soc_link * SOC_HIGH_TH)
-        der_ch_t: dict[str, float] = {bm: 0.5 * BESS_PMAX}
-        der_ch_t.update({v: -c for v, c in bess_ch[t].coeffs.items()})
-        der_ch_t.update({v: -c for v, c in der_ch[t].coeffs.items()})
-        add_squared_penalty(bqm, der_ch_t, 0.5 * BESS_PMAX, lam_derating)
-        der_dis_t: dict[str, float] = {bm: 0.5 * BESS_PMAX}
-        der_dis_t.update({v: -c for v, c in bess_dis[t].coeffs.items()})
-        der_dis_t.update({v: -c for v, c in der_dis[t].coeffs.items()})
-        add_squared_penalty(bqm, der_dis_t, 0.5 * BESS_PMAX, lam_derating)
+        # B.5 derating: P_ch ≤ 0.5·P_nom·(1+b_mid)  (UP, no slack)
+        lam1_der = lam_derating * bess_ch[t].step
+        h_ch: dict[str, float] = dict(bess_ch[t].coeffs)
+        h_ch[bm] = -0.5 * BESS_PMAX
+        add_up_penalty(bqm, h_ch, -0.5 * BESS_PMAX, lam1_der, lam_derating)
+        h_dis: dict[str, float] = dict(bess_dis[t].coeffs)
+        h_dis[bm] = -0.5 * BESS_PMAX
+        add_up_penalty(bqm, h_dis, -0.5 * BESS_PMAX, lam1_der, lam_derating)
+
+    # Normalize: objective coefficients → [-1, 1], lambda_eff = 2.0
+    bqm.scale(1.0 / _moc)
 
     ctx = {
         "T": T, "df": df, "grid_in": grid_in, "grid_out": grid_out,

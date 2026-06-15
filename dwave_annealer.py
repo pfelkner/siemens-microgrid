@@ -149,20 +149,15 @@ def _qpu(bqm, num_reads: int):
 def run_rolling(
     df: pd.DataFrame,
     *,
-    bits: int = 4,
-    num_reads: int = 1000,
-    sweeps: int = 10_000,
+    bits: int = 5,
+    num_reads: int = 50,
     seed: int = 42,
     polish: bool = True,
     use_leap: bool = False,
     use_qpu: bool = False,
     leap_time_limit: float = 3.0,
-    window: int = 288,
+    window: int = 96,
     step: int = 96,
-    lam_balance: float = 1.0,
-    lam_soc: float = 1.0,
-    lam_peak: float = 1.0,
-    lam_xor: float = 0.5,
 ) -> pd.DataFrame:
     """Rolling-window MPC: solve horizon=window slots, commit=step slots per iteration."""
     if use_qpu:
@@ -172,7 +167,6 @@ def run_rolling(
         sampler = lambda bqm: _leap_hybrid(bqm, leap_time_limit)
         backend = "Leap Hybrid"
     else:
-        sampler = lambda bqm: _sa(bqm, num_reads, sweeps, seed, polish)
         backend = "SimulatedAnnealing"
 
     total_slots = len(df)
@@ -192,13 +186,15 @@ def run_rolling(
             chunk,
             bits_grid=bits, bits_bess=bits, bits_soc=bits,
             soc_init=soc_carry,
-            lam_balance=lam_balance, lam_soc=lam_soc,
-            lam_peak=lam_peak, lam_xor=lam_xor,
         )
         n, nq = len(bqm.variables), bqm.num_interactions
+        # auto-scale: at least 20 sweeps per variable (SA convergence heuristic)
+        effective_sweeps = n * 20
+        if not (use_leap or use_qpu):
+            sampler = lambda bqm: _sa(bqm, num_reads, effective_sweeps, seed, polish)
         print(f"[win {win_idx:03d}] offset={offset:4d}  horizon={horizon:3d}  "
               f"commit={commit:3d}  soc_init={soc_carry:6.1f}kWh  "
-              f"vars={n}  interactions={nq}")
+              f"vars={n}  interactions={nq}  sweeps={effective_sweeps}")
 
         ss, t_solve, t_polish_t = sampler(bqm)
         t_wall = t_solve + t_polish_t
@@ -227,15 +223,14 @@ def run_rolling(
 def main() -> int:
     p = argparse.ArgumentParser(description="D-Wave SA rolling MPC for microgrid dispatch")
     p.add_argument("--data",             default="artifacts/data/all_data.csv")
-    p.add_argument("--bits",             type=int,   default=4)
-    p.add_argument("--window",           type=int,   default=288,
-                   help="forecast horizon in slots (default 288 = 3 days)")
+    p.add_argument("--bits",             type=int,   default=5)
+    p.add_argument("--window",           type=int,   default=96,
+                   help="forecast horizon in slots (default 96 = 1 day)")
     p.add_argument("--step",             type=int,   default=96,
                    help="slots committed per window (default 96 = 1 day)")
     p.add_argument("--total-slots",      type=int,   default=None,
                    help="total slots from dataset (default: all)")
     p.add_argument("--num-reads",        type=int,   default=1000)
-    p.add_argument("--sweeps",           type=int,   default=10_000)
     p.add_argument("--seed",             type=int,   default=42)
     p.add_argument("--no-polish",        action="store_true")
     p.add_argument("--use-leap",         action="store_true",
@@ -243,10 +238,6 @@ def main() -> int:
     p.add_argument("--use-qpu",          action="store_true",
                    help="Real D-Wave QPU (requires DWAVE_API_TOKEN)")
     p.add_argument("--leap-time-limit",  type=float, default=3.0)
-    p.add_argument("--lam-balance",      type=float, default=1.0)
-    p.add_argument("--lam-soc",          type=float, default=1.0)
-    p.add_argument("--lam-peak",         type=float, default=1.0)
-    p.add_argument("--lam-xor",          type=float, default=0.5)
     args = p.parse_args()
 
     out_schedule = Path("artifacts/results/schedule_annealer.csv")
@@ -262,7 +253,6 @@ def main() -> int:
         df,
         bits=args.bits,
         num_reads=args.num_reads,
-        sweeps=args.sweeps,
         seed=args.seed,
         polish=not args.no_polish,
         use_leap=args.use_leap,
@@ -270,10 +260,6 @@ def main() -> int:
         leap_time_limit=args.leap_time_limit,
         window=args.window,
         step=args.step,
-        lam_balance=args.lam_balance,
-        lam_soc=args.lam_soc,
-        lam_peak=args.lam_peak,
-        lam_xor=args.lam_xor,
     )
     schedule.to_csv(out_schedule, index=False)
 
