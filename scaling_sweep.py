@@ -18,16 +18,14 @@ def main() -> int:
     p.add_argument("--sizes",     type=int, nargs="+", default=DEFAULT_SIZES)
     p.add_argument("--scenarios", type=int, nargs="+", default=DEFAULT_SCENARIOS,
                    help="Scenario counts to sweep (e.g. --scenarios 1 5 10 25)")
-    p.add_argument("--data",         default="all_data.csv")
-    p.add_argument("--out-summary",  default="results_classical.csv")
-    p.add_argument("--out-schedule", default="schedule_classical.csv")
+    p.add_argument("--data",         default="artifacts/data/all_data.csv")
     p.add_argument("--time-limit",   type=float, default=None)
     p.add_argument("--mip-gap",      type=float, default=1e-4)
     p.add_argument("--reset",        action="store_true",
                    help="Delete the summary CSV before sweeping")
     args = p.parse_args()
 
-    summary_path = Path(args.out_summary)
+    summary_path = Path("artifacts/results/results_classical.csv")
     if args.reset and summary_path.exists():
         summary_path.unlink()
         print(f"[reset] removed {summary_path}")
@@ -36,21 +34,17 @@ def main() -> int:
 
     for m_sc in args.scenarios:
         for n in args.sizes:
-            log = f"gurobi_T{n}_M{m_sc}.log"
             cmd = [
                 sys.executable, str(solver),
                 "--data",         args.data,
                 "--slots",        str(n),
                 "--scenarios",    str(m_sc),
                 "--mip-gap",      str(args.mip_gap),
-                "--out-summary",  args.out_summary,
-                "--out-schedule", args.out_schedule,
-                "--gurobi-log",   log,
                 "--quiet",
             ]
             if args.time_limit is not None:
                 cmd += ["--time-limit", str(args.time_limit)]
-            print(f"[sweep] T={n:>4}  M={m_sc:>2}  -> {log}")
+            print(f"[sweep] T={n:>4}  M={m_sc:>2}")
             rc = subprocess.call(cmd)
             if rc != 0:
                 print(f"[sweep] WARN: solver returned non-zero exit ({rc}) for T={n} M={m_sc}")

@@ -160,10 +160,10 @@ def main() -> None:
                         help="Exclusive end date (last slot is end_date - 15min)")
     parser.add_argument("--tilt", type=float, default=20)
     parser.add_argument("--azimuth", type=float, default=180)
-    parser.add_argument("--output-dir", type=Path, default=None)
     args = parser.parse_args()
 
-    output_dir = args.output_dir or BASE_DIR
+    output_dir = Path("artifacts/data")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     pv = build_pv_profile(
         capacity_kwp=args.capacity_kwp,
