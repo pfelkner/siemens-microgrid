@@ -47,6 +47,8 @@ def build_and_solve(
     export_rate: float = EXPORT_RATE,
     soc_init: float = SOC_INIT,
     peak_floor: float = 0.0,
+    peak_mode: str = "demand_charge",
+    penalty_rate: float = 0.0,
 ) -> tuple[gp.Model, dict, list[pd.DataFrame]]:
     """Build and solve the (stochastic) MILP.
 
@@ -55,6 +57,16 @@ def build_and_solve(
 
     soc_init:   starting SoC for t=0 (default SOC_INIT reproduces full-horizon behaviour).
     peak_floor: lower bound on peak_import — carries the running monthly peak into window solves.
+    peak_mode:  how the peak enters the objective.
+                "demand_charge" (default): pay DEMAND_CHARGE * peak_import — the
+                    original endogenous-peak behaviour.
+                "commit_penalty": the base demand charge on the committed peak is
+                    handled OUTSIDE the solve (by the rolling driver). Here we only
+                    charge the marginal exceedance penalty for raising the peak
+                    above peak_floor = max(P_commit, running peak), i.e.
+                    penalty_rate * (peak_import - peak_floor). Summed over a month's
+                    window solves this equals penalty_rate * max(0, realized_peak - P_commit).
+    penalty_rate: $/kW exceedance penalty, used only when peak_mode="commit_penalty".
     """
     M = len(df_list)
     T = len(df_list[0])
@@ -152,7 +164,13 @@ def build_and_solve(
         probs[s] * tou[s][t] * grid_in[s][t] * DT
         for s in range(M) for t in range(T)
     )
-    demand_cost = DEMAND_CHARGE * peak_import   # NOT weighted — first-stage variable
+    # Peak cost. "demand_charge": pay the full charge on the realized peak.
+    # "commit_penalty": base charge on P_commit is external; only the marginal
+    # exceedance above peak_floor is priced here (peak_import >= peak_floor by bound).
+    if peak_mode == "commit_penalty":
+        demand_cost = penalty_rate * (peak_import - peak_floor)
+    else:
+        demand_cost = DEMAND_CHARGE * peak_import   # NOT weighted — first-stage variable
     resiliency_revenue = gp.quicksum(
         probs[s] * resiliency_per_slot * served[s][t]
         for s in range(M) for t in outages[s]
@@ -197,7 +215,10 @@ def build_and_solve(
         probs[s] * tou[s][t] * grid_in[s][t].X * DT
         for s in range(M) for t in range(T)
     ))
-    demand_cost_v = float(DEMAND_CHARGE * peak_import.X)
+    if peak_mode == "commit_penalty":
+        demand_cost_v = float(penalty_rate * (peak_import.X - peak_floor))
+    else:
+        demand_cost_v = float(DEMAND_CHARGE * peak_import.X)
     resiliency_v  = float(sum(
         probs[s] * resiliency_per_slot * served[s][t].X
         for s in range(M) for t in outages[s]
@@ -227,6 +248,8 @@ def build_and_solve(
         "resiliency_revenue": resiliency_v,
         "export_revenue":   export_revenue_v,
         "peak_import_kw":   float(peak_import.X),
+        "peak_floor_kw":    float(peak_floor),
+        "peak_mode":        peak_mode,
         "served_count":     served_count,
         "outage_slots":     len(outages[0]),
     }
