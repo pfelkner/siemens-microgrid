@@ -321,7 +321,7 @@ def append_summary(out_path: Path, row: dict) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Classical MILP microgrid solver")
-    p.add_argument("--data",           default="all_data.csv")
+    p.add_argument("--data",           default="artifacts/data/all_data.csv")
     p.add_argument("--slots",          type=int,   default=2880,
                    help="Number of 15-min slots to optimize (capped at file length)")
     p.add_argument("--scenarios",      type=int,   default=1,
@@ -339,11 +339,13 @@ def main() -> int:
                    help="Export tariff in $/kWh (use 0.0 for pre-patch behavior)")
     p.add_argument("--time-limit",     type=float, default=None)
     p.add_argument("--mip-gap",        type=float, default=1e-4)
-    p.add_argument("--out-schedule",   default="schedule_classical.csv")
-    p.add_argument("--out-summary",    default="results_classical.csv")
-    p.add_argument("--gurobi-log",     default="gurobi.log")
     p.add_argument("--quiet",          action="store_true")
     args = p.parse_args()
+
+    out_schedule = Path("artifacts/results/schedule_classical.csv")
+    out_summary  = Path("artifacts/results/results_classical.csv")
+    gurobi_log   = Path("artifacts/results/gurobi.log")
+    out_schedule.parent.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(args.data)
     n = min(args.slots, len(df))
@@ -363,7 +365,7 @@ def main() -> int:
             homogeneous=args.homogeneous,
         )
 
-    log_path = Path(args.gurobi_log)
+    log_path = gurobi_log
     if log_path.exists():
         log_path.unlink()
 
@@ -379,7 +381,7 @@ def main() -> int:
     )
 
     # ---------- Write schedules ----------
-    base = Path(args.out_schedule)
+    base = out_schedule
     if M == 1:
         schedules[0].to_csv(base, index=False)
     else:
@@ -422,7 +424,7 @@ def main() -> int:
     for e in all_errors:
         print(f"ERROR: {e}", file=sys.stderr)
 
-    append_summary(Path(args.out_summary), info)
+    append_summary(out_summary, info)
 
     if not args.quiet:
         mode = "stochastic" if M > 1 else "deterministic"

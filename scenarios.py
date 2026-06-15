@@ -168,7 +168,7 @@ def print_regime_table(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Scenario generator for stochastic microgrid solver")
-    p.add_argument("--data",           default="all_data.csv")
+    p.add_argument("--data",           default="artifacts/data/all_data.csv")
     p.add_argument("--slots",          type=int,   default=96)
     p.add_argument("--scenarios",      type=int,   default=5)
     p.add_argument("--seed",           type=int,   default=0)

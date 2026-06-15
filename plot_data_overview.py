@@ -1,6 +1,7 @@
 """Produce a 4-panel overview plot of the first 3 days of all_data.csv."""
 
 import argparse
+from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -66,7 +67,8 @@ def main(csv_path: str, out_path: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Plot 3-day data overview")
-    parser.add_argument("--csv", default="all_data.csv")
-    parser.add_argument("--out", default="data_overview.png")
+    parser.add_argument("--csv", default="artifacts/data/all_data.csv")
     args = parser.parse_args()
-    main(args.csv, args.out)
+    out = Path("artifacts/results/data_overview.png")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    main(args.csv, str(out))
