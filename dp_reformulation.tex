@@ -1,0 +1,228 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\title{Microgrid Dispatch as a Dynamic Program\\[2pt]
+\large The Signed-Trajectory Reformulation}
+\author{QC Praktikum --- companion to \texttt{dp\_solver.py}}
+\date{June 2026}
+
+% notation consistent with math-model-main.tex
+\newcommand{\Pimp}{P^{\text{imp}}}
+\newcommand{\Pexp}{P^{\text{exp}}}
+\newcommand{\Pch}{P^{\text{ch}}}
+\newcommand{\Pdis}{P^{\text{dis}}}
+\newcommand{\Ppk}{P^{\text{peak}}}
+\newcommand{\Ppv}{P^{\text{PV}}}
+\newcommand{\Pload}{P^{\text{load}}}
+\newcommand{\cdem}{c^{\text{dem}}}
+\newcommand{\ctou}{c^{\text{ToU}}}
+\newcommand{\cexp}{c^{\text{exp}}}
+\newcommand{\rres}{r^{\text{res}}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We recast the deterministic microgrid dispatch model (the MILP of
+\texttt{classical\_solver.py}) as an exact \emph{dynamic program}. The idea is
+that almost every constraint of the original model is not restrictive but
+\emph{definitional}: once the battery decision is fixed, power balance,
+state-of-charge dynamics, and the charge/discharge and import/export exclusivity
+are all determined. Eliminating these leaves a single genuine degree of freedom
+per slot --- the battery's signed power --- and the feasible set collapses to a
+\emph{bounded lattice walk} of the state of charge. Optimising over it is a
+textbook stage-wise dynamic program. The resulting solver is \emph{feasible by
+construction}: online power balance and SoC dynamics hold exactly, with no
+penalties and no integer programming. We state the reformulation, the DP, the
+handling of the (non-separable) demand charge, and the one remaining
+discretisation limitation.
+\end{abstract}
+
+\section{From five variables per slot to one}
+
+The original model (slots $t\in\mathcal{T}=\{0,\dots,T-1\}$, $\Delta t = 0.25$\,h)
+carries, per slot, the continuous variables
+$\Pimp_t,\ \Pexp_t,\ \Pch_t,\ \Pdis_t,\ E_t$ and a horizon-wide billing peak
+$\Ppk$, plus binaries for SoC bands, charge/discharge exclusivity, and outage
+service. The PV $\Ppv_t$, load $\Pload_t$, time-of-use price $\ctou_t$ and grid
+availability $g_t\in\{0,1\}$ are known inputs.
+
+The crucial observation is that the binding equalities are \emph{definitions}.
+
+\paragraph{Power balance is a formula for the grid exchange.}
+On an online slot ($g_t=1$) the balance
+\(
+\Ppv_t + \Pimp_t - \Pexp_t + \Pdis_t - \Pch_t = \Pload_t
+\)
+does not constrain the battery at all: it \emph{determines} the grid exchange
+once the battery is chosen. Writing the signed battery power
+$b_t := \Pdis_t - \Pch_t$ and the net grid power
+$\Delta_t := \Pload_t - \Ppv_t - b_t$,
+\begin{equation}
+  \Pimp_t = \max(0,\ \Delta_t), \qquad
+  \Pexp_t = \max(0,\ -\Delta_t).
+  \label{eq:grid}
+\end{equation}
+Because $\Delta_t$ has a single sign, $\Pimp_t$ and $\Pexp_t$ are never both
+positive: the import/export exclusivity is automatic.
+
+\paragraph{SoC is the running sum of the battery trajectory.}
+The dynamics
+\begin{equation}
+  E_t = E_{t-1} + \eta\,\Pch_t\,\Delta t - \tfrac{1}{\eta}\,\Pdis_t\,\Delta t,
+  \qquad E_{-1}=E_0,
+  \label{eq:soc}
+\end{equation}
+make $E_t$ a deterministic function of the history of $b_t$; it is not free.
+Conversely, fixing the SoC levels $E_{t-1}, E_t$ \emph{inverts}
+\eqref{eq:soc} to a unique battery action via $\delta_t := E_t - E_{t-1}$:
+\begin{equation}
+  \Pch_t = \frac{\max(0,\delta_t)}{\eta\,\Delta t}, \qquad
+  \Pdis_t = \frac{\max(0,-\delta_t)\,\eta}{\Delta t}.
+  \label{eq:invert}
+\end{equation}
+A single signed step $\delta_t$ thus encodes the whole slot. Charge and
+discharge are never simultaneously positive --- the charge/discharge
+exclusivity is automatic too.
+
+\paragraph{What is left.} Choosing the SoC \emph{level} at each slot end is the
+only decision. The constraints that survive are exactly those that genuinely
+restrict that choice:
+\begin{itemize}
+  \item box bound $0 \le E_t \le \bar{E}$ (capacity, $\bar{E}=1000$\,kWh);
+  \item SoC-band power derating: $\Pch_t,\Pdis_t \le P^{\max}(E_t)$, where
+        $P^{\max}=125$\,kW for $E_t\le 100$ or $E_t\ge 900$\,kWh, else $250$\,kW;
+  \item grid box $\Pimp_t,\Pexp_t \le \bar{P}^{\mathrm{grid}}=1000$\,kW;
+  \item during an outage ($g_t=0$): $\Pimp_t=\Pexp_t=0$, and the slot is
+        \emph{served} (earning $\rres$) only if the island balances on battery
+        and PV alone.
+\end{itemize}
+
+\section{The dynamic program}
+
+Discretise the SoC into $L$ levels
+$\mathcal{E}=\{e_0,\dots,e_{L-1}\}$, $e_k = k\,\bar{E}/(L-1)$. The DP is:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Stage & slot $t = 0,\dots,T-1$\\
+State & SoC level $E_t \in \mathcal{E}$\\
+Decision & transition $E_{t-1}\!\to\!E_t$, i.e. the step $\delta_t$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Transition feasibility and cost.}
+For a transition $E_{t-1}=e_i \to E_t=e_j$, recover $(\Pch_t,\Pdis_t)$ from
+\eqref{eq:invert} and the grid exchange from \eqref{eq:grid}. The transition is
+feasible iff the derating and grid boxes hold (the SoC box holds by virtue of
+$e_j\in\mathcal{E}$). Its stage cost, ignoring the demand charge for the moment,
+is additive:
+\begin{equation}
+  c_t(i,j) =
+  \begin{cases}
+    \ctou_t\,\Pimp_t\,\Delta t \;-\; \cexp\,\Pexp_t\,\Delta t, & g_t = 1,\\[4pt]
+    -\,\rres \cdot \mathbf{1}\!\left[\,\bigl|\Ppv_t + b_t - \Pload_t\bigr| \le \tau\,\right], & g_t = 0,
+  \end{cases}
+  \label{eq:stagecost}
+\end{equation}
+with $b_t=\Pdis_t-\Pch_t$. Infeasible transitions get $c_t(i,j)=+\infty$. The
+tolerance $\tau$ recognises a served outage slot; see Section~\ref{sec:limit}.
+
+\paragraph{Recursion.} With $V_t(j)$ the minimum cost to reach level $e_j$ at the
+end of slot $t$, starting from the snapped initial level
+$E_0\!=\!\arg\min_{e}|e-E_0^{\text{nom}}|$,
+\begin{equation}
+  V_t(j) = \min_{i} \bigl[\,V_{t-1}(i) + c_t(i,j)\,\bigr],
+  \qquad
+  V_{-1}(i)=\begin{cases}0 & e_i=E_0\\ +\infty & \text{else.}\end{cases}
+\end{equation}
+The optimum is $\min_j V_{T-1}(j)$; the trajectory follows by back-pointers.
+
+\paragraph{The demand charge.}
+The billing term $\cdem\,\Ppk = \cdem \max_t \Pimp_t$ is \emph{not} additive over
+slots and would break the recursion. We handle it with the standard
+demand-charge sweep: for a candidate cap $\hat{P}$ we forbid transitions with
+$\Pimp_t>\hat{P}$ (set their cost to $+\infty$), solve the additive DP above to
+get $V^\star(\hat{P})$, and minimise
+\begin{equation}
+  \min_{\hat{P}\in\mathcal{P}}\; \bigl[\,V^\star(\hat{P}) + \cdem\,\hat{P}\,\bigr]
+\end{equation}
+over a grid $\mathcal{P}$ of caps. The optimal peak equals the realised maximum
+import, so a sweep over candidate caps recovers it (exactly in the limit of a
+fine grid). This mirrors the \texttt{repair\_peak} step on the QUBO side: the
+peak is a derived quantity, not an independent decision.
+
+\section{Objective}
+
+Collecting the stage costs and the demand charge, the DP minimises exactly the
+deterministic objective of the original model,
+\begin{equation}
+  \min\
+  \underbrace{\sum_{t}\ctou_t\,\Pimp_t\,\Delta t}_{\text{energy cost}}
+  \;+\;
+  \underbrace{\cdem\,\Ppk}_{\text{demand charge}}
+  \;-\;
+  \underbrace{\sum_{t\in\mathcal{O}}\rres\,y_t}_{\text{resiliency revenue}}
+  \;-\;
+  \underbrace{\sum_{t}\cexp\,\Pexp_t\,\Delta t}_{\text{export revenue}},
+\end{equation}
+with $\Pimp_t,\Pexp_t,\Pch_t,\Pdis_t,E_t,y_t$ all read off the chosen SoC
+trajectory rather than optimised independently.
+
+\section{Feasibility by construction}
+
+Unlike the penalty-QUBO, where constraints are soft and leak under
+discretisation, the DP trajectory satisfies the hard constraints \emph{exactly}:
+\begin{itemize}
+  \item \textbf{Online power balance} holds with zero residual --- it is the
+        definition \eqref{eq:grid} of the grid exchange.
+  \item \textbf{SoC dynamics} hold with zero residual for $t\ge 1$ --- the
+        action \eqref{eq:invert} is the exact inverse of \eqref{eq:soc}.
+  \item \textbf{SoC bounds} hold because every state lies in $\mathcal{E}\subseteq[0,\bar E]$.
+  \item \textbf{Charge/discharge and import/export exclusivity} hold because
+        each is a single signed quantity.
+  \item \textbf{No grid exchange during outages} is enforced by
+        \eqref{eq:stagecost}.
+\end{itemize}
+\texttt{dp\_solver.py:validate} checks all of these; on the supplied data it
+reports zero violations across the full $T=2785$ horizon, solved in $\approx 1$\,s.
+
+\section{The one discretisation limitation}\label{sec:limit}
+
+Discretising the SoC costs \emph{resolution}, not feasibility --- on online
+slots any grid trajectory is feasible because the grid absorbs the residual. The
+single exception is \textbf{outage serving}. To earn $\rres$ the battery must
+cover $\Pload_t-\Ppv_t$ \emph{exactly}, i.e.\ hit a SoC step $\delta_t$ whose
+implied power equals that demand. The achievable steps are quantised, so a slot
+is served only when some grid transition balances the island within $\tau$.
+Coarse grids therefore under-serve outages; refining the grid recovers them.
+Empirically, on a synthetic two-outage instance the served count rises
+$0/2 \to 2/2$ as $L$ goes $41 \to 641$ (SoC step $25 \to 1.6$\,kWh). The knobs
+are \texttt{--soc-levels} and \texttt{--serve-tol}.
+
+The cost of refinement is $O(T\,L^2\,|\mathcal{P}|)$ time and $O(T\,L^2)$ memory.
+
+\section{Relationship to GM-QAOA}
+
+This reduction is also the honest verdict on Grover-Mixer QAOA for this problem.
+GM-QAOA needs an efficient state-preparation unitary $U_S$ for the uniform
+superposition over the feasible set. After the reformulation, that feasible set
+is a bounded SoC walk, which \emph{does} admit such a preparation (its feasible
+completions are counted by exactly the DP above, giving Grover--Rudolph-style
+prefix-counting angles, equivalently a low-bond-dimension matrix-product state).
+But the same DP that would build $U_S$ \emph{already solves the optimisation
+exactly and in $\approx 1$\,s classically.} The structure that makes GM-QAOA
+applicable is the structure that makes the problem classically trivial; there is
+no advantage to chase on the single-battery dispatch. A genuine quantum target
+would require couplings (multi-asset unit commitment, network power flow) that
+make the optimisation NP-hard \emph{without} destroying the cheap state
+preparation --- which is not the model considered here.
+
+\end{document}

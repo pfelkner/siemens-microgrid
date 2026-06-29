@@ -1,0 +1,145 @@
+% =====================================================================
+%  Reduction of the dispatch MILP to (A) continuous-only and
+%  (B) discrete-only variables — including all constraints.
+%
+%  Basis: the per-window MILP that classical_solver.py builds on main
+%  (after the soft-peak merge). The solver has two peak modes:
+%    - "demand_charge" (default): peak term = c^dem * P^peak
+%    - "commit_penalty" (soft peak): peak term = c^pen * (P^peak - P^floor),
+%      with P^floor = max(P^commit, running peak) fixed per window.
+%  The (.)^+ exceedance and the ratchet are NOT in one MILP — they emerge
+%  from the rolling driver (rolling_horizon.py) telescoping window solves.
+%  See the final frame.
+%
+%  Reuses the symbol macros (\Pimp, \Esoc, ...) defined in main.tex.
+%  Drop \input{reductions} after the constraints section, or compile
+%  standalone by copying main.tex's preamble.
+% =====================================================================
+
+\section{Reduction to Discrete / Continuous Variables}
+
+% ---------------------------------------------------------------------
+% Variable partition + separable objective
+% ---------------------------------------------------------------------
+\begin{frame}{Splitting the Variables}
+The MILP variables split into a continuous block and a binary block:
+\[
+\underbrace{\mathbf{c}=\bigl(\Pimp{s,t},\,\Pexp{s,t},\,\Pch{s,t},\,\Pdis{s,t},\,\Esoc{s,t},\,\Ppeak\bigr)}_{\text{continuous}}
+\quad
+\underbrace{\mathbf{z}=\bigl(\blow{s,t},\bmid{s,t},\bhigh{s,t},\,\bch{s,t},\bdis{s,t},\,\bimp{s,t},\bexp{s,t},\,\yserved{s,t}\bigr)}_{\text{binary}}
+\]
+\begin{block}{The objective is \emph{separable}: $f(\mathbf c) + g(\mathbf z)$ (soft-peak / one window)}
+\small
+\[
+\min\;
+\underbrace{\sum_{s}\ps\sum_{t}\cToU{s,t}\,\Pimp{s,t}\,\dt
+\;+\;\cpen\bigl(\Ppeak-P^{\text{floor}}\bigr)
+\;-\;\sum_{s}\ps\sum_{t}\cexp\,\Pexp{s,t}\,\dt}_{f(\mathbf c)\ \text{(continuous only)}}
+\;\underbrace{-\;\sum_{s}\ps\sum_{t\in\setOs}\rres\,\yserved{s,t}}_{g(\mathbf z)\ \text{(binary only)}}
+\]
+\end{block}
+\begin{itemize}\footnotesize
+  \item All coupling between the two blocks lives in the \textbf{constraints}, not the objective.
+  \item Resiliency reward depends \emph{only} on $\yserved{s,t}$; everything else in the cost depends \emph{only} on $\mathbf c$.
+  \item $P^{\text{floor}}=\max(\Pcommit,\text{running peak})$ is a \textbf{constant per window} (carried in by the rolling driver). \textbf{Default} \texttt{demand\_charge} mode instead uses $\cdem\,\Ppeak$ here — same variable, both leave the binary block untouched.
+\end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------
+% (A) Continuous reduction: fix the binaries -> LP
+% ---------------------------------------------------------------------
+\begin{frame}{(A) Reduced to Continuous Variables (fix $\mathbf z=\hat{\mathbf z}$)}
+For a \textbf{fixed feasible} binary assignment, the binaries collapse into constant bounds and the problem becomes a pure \textbf{LP} in $\mathbf c$ (the recourse / Benders subproblem). The active band sets, per $(s,t)$,
+\[
+[\underline E_{s,t},\,\overline E_{s,t}]=
+\begin{cases}
+[0,\Elow] & \hat b^{\text{low}}_{s,t}=1\\
+[\Elow,\Ehigh] & \hat b^{\text{mid}}_{s,t}=1\\
+[\Ehigh,\Emax] & \hat b^{\text{high}}_{s,t}=1
+\end{cases}
+\qquad
+\overline P^{\text{B}}_{s,t}=\Pbnom\bigl[\fedge(\hat b^{\text{low}}_{s,t}+\hat b^{\text{high}}_{s,t})+\fmid\,\hat b^{\text{mid}}_{s,t}\bigr]\in\{125,250\}.
+\]
+\[
+\min_{\mathbf c}\;\;
+\sum_{s}\ps\sum_{t}\cToU{s,t}\,\Pimp{s,t}\,\dt
+\;+\;\cpen\bigl(\Ppeak-P^{\text{floor}}\bigr)
+\;-\;\sum_{s}\ps\sum_{t}\cexp\,\Pexp{s,t}\,\dt
+\qquad\text{\scriptsize($g(\hat{\mathbf z})$ is now a constant)}
+\]
+\vspace{-0.4em}
+\begin{block}{}
+\scriptsize
+\textbf{s.t.} for all $s\in\setS,\,t\in\setT$:
+\begin{align*}
+\text{online }(g_{s,t}{=}1):\quad & \Ppv{s,t}+\Pimp{s,t}-\Pexp{s,t}+\Pdis{s,t}-\Pch{s,t}=\Pload{s,t}\\
+\text{outage }(g_{s,t}{=}0):\quad & \Pimp{s,t}=\Pexp{s,t}=0,\qquad
+   \text{and if }\hat y_{s,t}{=}1:\ \Ppv{s,t}+\Pdis{s,t}-\Pch{s,t}=\Pload{s,t}\ \text{(else: free)}\\
+\text{SoC dynamics:}\quad & \Esoc{s,t}=\Esoc{s,t-1}+\etapar\,\Pch{s,t}\,\dt-\tfrac{1}{\etapar}\,\Pdis{s,t}\,\dt\\
+\text{SoC band box:}\quad & \underline E_{s,t}\le \Esoc{s,t}\le \overline E_{s,t}
+   \qquad\text{\scriptsize(replaces $0\le E\le\Emax$ \emph{and} the indicator constraints)}\\
+\text{throttle:}\quad & 0\le \Pch{s,t},\,\Pdis{s,t}\le \overline P^{\text{B}}_{s,t}\\
+\text{battery gating:}\quad & \Pch{s,t}\le \Pbnom\,\hat b^{\text{ch}}_{s,t},\qquad \Pdis{s,t}\le \Pbnom\,\hat b^{\text{dis}}_{s,t}
+   \qquad\text{\scriptsize(bit $=0\Rightarrow$ flow $=0$)}\\
+\text{grid gating:}\quad & \Pimp{s,t}\le \Pgmax\,\hat b^{\text{imp}}_{s,t},\qquad \Pexp{s,t}\le \Pgmax\,\hat b^{\text{exp}}_{s,t}\\
+\text{peak coupling:}\quad & \Ppeak\ge \Pimp{s,t},\qquad P^{\text{floor}}\le\Ppeak\le\Pgmax\\
+\text{box:}\quad & 0\le \Pimp{s,t},\Pexp{s,t}\le\Pgmax,\quad 0\le \Pch{s,t},\Pdis{s,t}\le\Pbnom
+\end{align*}
+\end{block}
+\vspace{-0.3em}
+{\footnotesize Convex LP $\Rightarrow$ polynomial-time. The big-M gating/throttle/indicator rows have all become \emph{constant} bounds; effective battery cap is $\min(\overline P^{\text{B}}_{s,t},\,\Pbnom\hat b^{\text{ch/dis}}_{s,t})$.}
+\end{frame}
+
+% ---------------------------------------------------------------------
+% (B) Discrete reduction: project out the continuous variables
+% ---------------------------------------------------------------------
+\begin{frame}{(B) Reduced to Discrete Variables (project out $\mathbf c$)}
+Eliminating the continuous block leaves an optimization purely over the binaries — the \textbf{master problem}. The \emph{only} constraints with no continuous variable are assignment / packing rows:
+\begin{block}{Pure-binary feasible set $\mathcal Z$ (per $s\in\setS,\,t\in\setT$)}
+\[
+\blow{s,t}+\bmid{s,t}+\bhigh{s,t}=1,\qquad
+\bch{s,t}+\bdis{s,t}\le 1,\qquad
+\bimp{s,t}+\bexp{s,t}\le 1,\qquad
+\text{all }\in\{0,1\}.
+\]
+\end{block}
+\vspace{-0.2em}
+\[
+\min_{\mathbf z\in\mathcal Z}\;\;
+\underbrace{-\sum_{s}\ps\sum_{t\in\setOs}\rres\,\yserved{s,t}}_{g(\mathbf z)}
+\;+\;
+\underbrace{\;Q(\mathbf z)\;}_{\text{value of LP (A)}},
+\qquad
+Q(\mathbf z)=\min_{\mathbf c}\bigl\{\,f(\mathbf c)\;:\;\mathbf c\ \text{feasible for fixed }\mathbf z\,\bigr\}
+\]
+($Q(\mathbf z)=+\infty$ if the LP is infeasible — e.g.\ a band/gating choice that cannot meet the load.)
+\begin{itemize}\footnotesize
+  \item \textbf{On their own the binaries decouple completely} across $(s,t)$: per slot, pick one of 3 SoC bands, at most one of charge/discharge, at most one of import/export, plus the served bit at outage slots — a tiny finite menu ($\le 27$ combos per online slot).
+  \item \textbf{All the difficulty is in $Q(\mathbf z)$}: the binaries only couple to the physics \emph{through the LP}. That is precisely why they are the \emph{complicating} variables, and why this is the \textbf{Benders / logic-based decomposition} master — the same block-angular split used for the scenarios (Appendix).
+\end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------
+% NOTE on code vs. main.tex
+% ---------------------------------------------------------------------
+\begin{frame}{Note: where the $(\cdot)^{+}$ and the ratchet live}
+\footnotesize
+The reductions above are for \textbf{one window MILP}. The soft peak
+$\cpen(\Preal-\Pcommit)^{+}$ and the ratchet are \textbf{not} a single-MILP
+construct — they are realized by the rolling driver (\texttt{rolling\_horizon.py})
+\emph{telescoping} window solves:
+\begin{itemize}
+  \item Per window the solver runs in \texttt{commit\_penalty} mode with
+        $P^{\text{floor}}=\max(\Pcommit,\ \text{running peak})$ as a constant lower bound on $\Ppeak$ (\texttt{lb}). At the optimum $\Ppeak=\max(P^{\text{floor}},\max_t\Pimp{s,t})$, so the priced term
+        $\cpen(\Ppeak-P^{\text{floor}})=\cpen\,\max\!\bigl(0,\ \max_t\Pimp{s,t}-P^{\text{floor}}\bigr)$
+        — the $(\cdot)^{+}$ \textbf{is} the $\Ppeak\ge P^{\text{floor}}$ bound plus non-negative pricing.
+  \item Summed over a month's windows (driver ratchets $P^{\text{floor}}$ up via
+        \texttt{ratchet\_next\_commit}) this telescopes to
+        $\cpen\,\max(0,\ \Preal-\Pcommit)$; the base charge $\cdem\,\Pcommit$ is added once, outside the solve.
+\end{itemize}
+\textbf{Consequence for the reductions:} switching modes touches only the
+\emph{peak term of $f(\mathbf c)$} and the \emph{lower bound on $\Ppeak$} — both in the
+continuous block. The binary block $\mathbf z$, set $\mathcal Z$, and $g(\mathbf z)$ are
+\textbf{identical} in either mode. The default \texttt{demand\_charge} mode is the special case
+$P^{\text{floor}}=0$ with $\cpen\!\to\!\cdem$.
+\end{frame}
