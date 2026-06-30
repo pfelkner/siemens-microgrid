@@ -10,6 +10,7 @@ dependencies = [
     "pvlib",
     "dwave-system",
     "matplotlib>=3.9.4",
+    "gurobipy>=12.0.3",
 ]
 
 [project.optional-dependencies]
