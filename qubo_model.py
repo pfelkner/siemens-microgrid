@@ -39,8 +39,10 @@ BESS_PMAX = 250.0               # kW nominal
 ETA_RT = 0.90                   # round-trip efficiency
 ETA = math.sqrt(ETA_RT)         # per-direction efficiency
 SOC_INIT = 500.0                # kWh
-DEMAND_CHARGE = 15.0            # $/kW over billing period
+DEMAND_CHARGE = 15.0            # $/kW/month committed peak (always paid)
+EXCEEDANCE_PENALTY = 45.0       # $/kW/month over committed peak (c^pen in MILP)
 EXPORT_RATE = 0.05              # $/kWh paid for grid export
+BILLING_SLOTS = 2880            # slots per billing period (30 days × 96 slots/day)
 GRID_PMAX = 1000.0              # kW
 SOC_LOW_TH = 100.0              # kWh low-band SoC threshold (B.5)
 SOC_HIGH_TH = 900.0             # kWh high-band SoC threshold (B.5)
@@ -124,7 +126,7 @@ def add_product_penalty(
 # ---------- Model builder (backend-neutral) ----------
 def _max_obj_coeff(
     bits_grid: int,
-    demand_charge: float,
+    exceedance_penalty: float,
     tou_max: float,
     export_rate: float,
     resiliency_rate: float,
@@ -138,7 +140,7 @@ def _max_obj_coeff(
     step_grid = GRID_PMAX / (2 ** bits_grid - 1)
     msb_grid  = step_grid * (2 ** (bits_grid - 1))
     return max(
-        demand_charge * msb_grid,
+        exceedance_penalty * msb_grid,
         tou_max * DT * msb_grid,
         export_rate * DT * msb_grid,
         resiliency_rate,
@@ -152,8 +154,11 @@ def build_qubo(
     bits_soc: int = 4,
     soc_init: float = SOC_INIT,
     demand_charge: float = DEMAND_CHARGE,
+    p_commit: float = 0.0,
+    exceedance_penalty: float = EXCEEDANCE_PENALTY,
     export_rate: float = EXPORT_RATE,
     resiliency_rate: float = RESILIENCY_PER_SLOT,
+    billing_slots: int = BILLING_SLOTS,
 ) -> tuple[dimod.BinaryQuadraticModel, dict]:
     """Build the core-model QUBO as a dimod BQM.
 
@@ -161,16 +166,23 @@ def build_qubo(
     where _moc = _max_obj_coeff(...). Lambda = 2.0 * _moc satisfies the Bakó
     condition (constraint violation always costlier than max objective gain).
 
+    demand_charge and exceedance_penalty are monthly rates ($/kW/month).
+    They are scaled by T/billing_slots so each window pays its proportional share.
+
     Returns (bqm, ctx) where ctx holds the encodings needed to decode samples.
     """
     T = len(df)
+    window_share = T / billing_slots          # fraction of billing period this window covers
+    dc = demand_charge * window_share         # $/kW for this window
+    ep = exceedance_penalty * window_share    # $/kW for this window
+
     p_pv = df["p_kw"].to_numpy(dtype=float)
     p_load = df["load_kw"].to_numpy(dtype=float)
     tou = df["tou_usd_kwh"].to_numpy(dtype=float)
     g_avail = df["grid_available"].to_numpy(dtype=int)
 
     tou_max = float(np.abs(tou).max()) if np.abs(tou).max() > 0 else 1.0
-    _moc = _max_obj_coeff(bits_grid, demand_charge, tou_max, export_rate, resiliency_rate)
+    _moc = _max_obj_coeff(bits_grid, ep, tou_max, export_rate, resiliency_rate)
     _lam = 2.0 * _moc
 
     lam_balance   = _lam
@@ -195,7 +207,8 @@ def build_qubo(
         if g_avail[t] == 0:
             b7_up[t] = Encoding(f"b7_up_{t}", _vmax_b7, bits_grid)
             b7_lo[t] = Encoding(f"b7_lo_{t}", _vmax_b7, bits_grid)
-    peak = Encoding("peak", GRID_PMAX, bits_grid)
+    # excess = max(0, P^real - P^commit): free variable; objective penalises c^pen * excess
+    excess = Encoding("excess", GRID_PMAX, bits_grid)
 
     # Snap soc_init onto the SoC encoding grid — otherwise the SoC-dynamics
     # penalty has an unavoidable residual at t=0 that biases the battery
@@ -204,14 +217,16 @@ def build_qubo(
     soc_init = round(soc_init / soc_step) * soc_step
 
     # ----- Objective (linear -> QUBO diagonal) -----
+    # c^dem * P^commit is constant (always paid) → offset only, no decision variable
+    bqm.offset += dc * p_commit
     for t in range(T):
         if g_avail[t] == 1:
             for v, c in grid_in[t].coeffs.items():
                 bqm.add_linear(v, tou[t] * DT * c)                    # energy cost
             for v, c in grid_out[t].coeffs.items():
                 bqm.add_linear(v, -export_rate * DT * c)              # export revenue
-    for v, c in peak.coeffs.items():
-        bqm.add_linear(v, demand_charge * c)                          # demand charge
+    for v, c in excess.coeffs.items():
+        bqm.add_linear(v, ep * c)                                     # exceedance penalty
 
     # ----- Constraints as penalties -----
     for t in range(T):
@@ -257,10 +272,10 @@ def build_qubo(
         if g_avail[t] == 1:
             add_product_penalty(bqm, grid_in[t].coeffs, grid_out[t].coeffs, lam_xor)
 
-            # B.4 peak coupling: grid_in[t] ≤ peak  (UP, no slack)
+            # B.4 peak coupling: grid_in[t] ≤ p_commit + excess  (UP, no slack)
             h_pk: dict[str, float] = dict(grid_in[t].coeffs)
-            h_pk.update({v: -c for v, c in peak.coeffs.items()})
-            add_up_penalty(bqm, h_pk, 0.0, lam_peak * grid_in[t].step, lam_peak)
+            h_pk.update({v: -c for v, c in excess.coeffs.items()})
+            add_up_penalty(bqm, h_pk, -p_commit, lam_peak * grid_in[t].step, lam_peak)
 
         # B.5 SoC-band assignment + power derating:
         #   b_low+b_mid+b_high=1,  P_ch/dis ≤ 0.5*P_nom*(1+b_mid)
@@ -287,10 +302,11 @@ def build_qubo(
 
     ctx = {
         "T": T, "df": df, "grid_in": grid_in, "grid_out": grid_out,
-        "bess_ch": bess_ch, "bess_dis": bess_dis, "soc": soc, "peak": peak,
+        "bess_ch": bess_ch, "bess_dis": bess_dis, "soc": soc, "excess": excess,
         "g_avail": g_avail, "soc_init": soc_init,
-        "demand_charge": demand_charge, "export_rate": export_rate,
-        "resiliency_rate": resiliency_rate,
+        "demand_charge": dc, "p_commit": p_commit,
+        "exceedance_penalty": ep,
+        "export_rate": export_rate, "resiliency_rate": resiliency_rate,
     }
     return bqm, ctx
 
@@ -332,16 +348,19 @@ def evaluate(schedule: pd.DataFrame, sample: dict, ctx: dict,
     """
     df = ctx["df"]
     tou = df["tou_usd_kwh"].to_numpy(dtype=float)
-    peak_raw = ctx["peak"].decode(sample)
-    peak_v = peak_raw
+    p_commit_val = ctx["p_commit"]
+    excess_raw = ctx["excess"].decode(sample)
     if repair_peak:
-        step = ctx["peak"].step
-        needed = math.ceil(schedule["Grid_Import"].max() / step - 1e-9) * step
-        peak_v = min(peak_raw, max(needed, 0.0)) if peak_raw > needed else needed
+        step = ctx["excess"].step
+        raw_needed = max(0.0, schedule["Grid_Import"].max() - p_commit_val)
+        excess_v = math.ceil(raw_needed / step - 1e-9) * step if raw_needed > 0 else 0.0
+    else:
+        excess_v = excess_raw
+    peak_v = p_commit_val + excess_v
 
     energy = float((tou * schedule["Grid_Import"].to_numpy() * DT).sum())
     export = float((ctx["export_rate"] * schedule["Grid_Export"].to_numpy() * DT).sum())
-    demand = ctx["demand_charge"] * peak_v
+    demand = ctx["demand_charge"] * p_commit_val + ctx["exceedance_penalty"] * excess_v
     r_rate = ctx.get("resiliency_rate", RESILIENCY_PER_SLOT)
     g = ctx["g_avail"]
     resiliency = float(sum(
@@ -367,7 +386,7 @@ def evaluate(schedule: pd.DataFrame, sample: dict, ctx: dict,
         "export_revenue": export,
         "resiliency_revenue": resiliency,
         "peak_import_kw": peak_v,
-        "peak_import_raw_kw": peak_raw,
+        "excess_raw_kw": excess_raw,
         "max_balance_resid_kw": float(np.abs(bal).max()),
         "max_soc_resid_kwh": float(np.abs(soc_resid).max()),
         "simultaneous_ch_dis_slots": int(both),

@@ -181,6 +181,7 @@ def run_rolling(
 
     total_slots = len(df)
     soc_carry = SOC_INIT
+    p_commit_carry = 200.0        # ratchet: P^commit ← max(P^commit, P^real) each window
     committed: list[pd.DataFrame] = []
     offset = 0
     win_idx = 0
@@ -196,6 +197,7 @@ def run_rolling(
             chunk,
             bits_grid=bits, bits_bess=bits, bits_soc=bits,
             soc_init=soc_carry,
+            p_commit=p_commit_carry,
         )
         n, nq = len(bqm.variables), bqm.num_interactions
         # auto-scale: at least 20 sweeps per variable (SA convergence heuristic)
@@ -220,12 +222,13 @@ def run_rolling(
 
         committed.append(schedule.iloc[:commit].copy())
         soc_carry = float(schedule.iloc[commit - 1]["BESS_SoC"])
+        p_commit_carry = max(p_commit_carry, float(schedule["Grid_Import"].iloc[:commit].max()))
 
         offset += commit
         win_idx += 1
 
     print(f"\n[rolling] {win_idx} windows  total_wall={t_wall_total:.1f}s")
-    return pd.concat(committed, ignore_index=True)
+    return pd.concat(committed, ignore_index=True), p_commit_carry
 
 
 # ---------- CLI ----------
@@ -260,7 +263,7 @@ def main() -> int:
     df = df.iloc[:total].reset_index(drop=True)
     print(f"[rolling] dataset={len(df)} slots  window={args.window}  step={args.step}")
 
-    schedule = run_rolling(
+    schedule, p_commit_carry = run_rolling(
         df,
         bits=args.bits,
         num_reads=args.num_reads,
@@ -274,14 +277,17 @@ def main() -> int:
     )
     schedule.to_csv(out_schedule, index=False)
 
-    from qubo_model import DEMAND_CHARGE, EXPORT_RATE
+    from qubo_model import DEMAND_CHARGE, EXCEEDANCE_PENALTY, EXPORT_RATE
     tou      = df["tou_usd_kwh"].to_numpy()
     energy   = float((tou * schedule["Grid_Import"].to_numpy() * 0.25).sum())
     export   = float((EXPORT_RATE * schedule["Grid_Export"].to_numpy() * 0.25).sum())
     peak     = float(schedule["Grid_Import"].max())
-    cost     = energy + DEMAND_CHARGE * peak - export
+    # p_commit_carry holds the final ratcheted committed level across all windows
+    demand   = DEMAND_CHARGE * p_commit_carry + EXCEEDANCE_PENALTY * max(0.0, peak - p_commit_carry)
+    cost     = energy + demand - export
     print(f"[result] total_cost=${cost:.2f}  energy=${energy:.2f}  "
-          f"demand=${DEMAND_CHARGE * peak:.2f}  export=${export:.2f}  peak={peak:.1f}kW")
+          f"demand=${demand:.2f}  export=${export:.2f}  peak={peak:.1f}kW  "
+          f"p_commit={p_commit_carry:.1f}kW")
     print(f"[output] {out_schedule}")
 
     plot_schedule(schedule, df, f"D-Wave SA rolling MPC — ${cost:.2f}", out_plot)
