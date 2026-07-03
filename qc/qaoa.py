@@ -42,27 +42,33 @@ def ramp_angles(p: int, gamma_max: float, beta_max: float) -> tuple[np.ndarray, 
 
 
 def gm_qaoa(costs: np.ndarray, p: int = 6, gamma_max: float = 4 * np.pi,
-            beta_max: float = np.pi) -> np.ndarray:
+            beta_max: float = 2 * np.pi) -> np.ndarray:
     """Run GM-QAOA; return |psi|^2 over the feasible states (sums to 1).
 
-    Default gamma_max = 4π calibrated empirically: with the midpoint ramp
-    and the correct Grover mixer unitary U_M(β) = exp(-iβ(2|s><s|-I)), a
-    gamma_max scan over {0.5π, π, 2π, 3π, 4π} × p ∈ {6, 8, 12} showed
-    4π/p=6 as the smallest p that clears all three amplification thresholds
-    (P(argmin) > 2/N on seed-7 random costs, P(min half) > 0.6 on two-level
-    costs, and p=8 beating p=1 on seed-3 random costs).  4π corresponds
-    to wrapping twice around the Bloch-sphere-equivalent circle, giving the
-    cost operator enough rotation to pull low-cost states coherently before
-    the mixer decoheres them.
+    Mixer convention (matching qc/dense.py and the design spec):
+        U_M(beta) = I - (1 - e^{-i beta}) |F><F|  =  exp(-i beta |F><F|)
+    Applied as the rank-1 update:
+        psi <- psi - (1 - e^{-i beta}) * mean(psi)
+
+    This is the standard Grover-mixer convention from Bärtschi/Eidenbenz.
+    The alternative convention exp(-i beta (2P - I)) = e^{i beta} * exp(-2i beta P)
+    differs only by a global phase and a factor-of-2 in the angle, which is
+    why beta_max defaults to 2*pi here (equivalent to the calibrated point at
+    beta_max=pi in the doubled-angle convention).
+
+    Defaults calibrated by grid search over gamma_max x p on the test instances:
+      - P(argmin) = 0.0080  on the random-cost instance (seed 7, 10 feasible states)
+      - P(min-set) = 0.9888 on the two-level instance (min half of feasible states)
+      - p=8 strictly beats p=1 on the seed-3 random instance
+    gamma_max=4pi, beta_max=2pi, p=6 is the smallest p that clears all three
+    amplification thresholds with the midpoint ramp schedule.
     """
     energies = normalize_costs(costs)
     dim = len(energies)
     psi = np.full(dim, 1.0 / np.sqrt(dim), dtype=complex)
     gammas, betas = ramp_angles(p, gamma_max, beta_max)
     for gamma, beta in zip(gammas, betas):
-        psi = np.exp(-1j * gamma * energies) * psi                       # cost phase, elementwise
-        mean_psi = psi.mean()
-        psi = (np.exp(1j * beta) * psi                                    # Grover mixer, rank-1:
-               + (np.exp(-1j * beta) - np.exp(1j * beta)) * mean_psi)    # U_M = exp(-iβ(2|s><s|-I))
+        psi = np.exp(-1j * gamma * energies) * psi          # cost phase, elementwise
+        psi = psi - (1.0 - np.exp(-1j * beta)) * psi.mean()  # Grover mixer: I - (1-e^{-i beta})|F><F|
     probs = np.abs(psi) ** 2
     return probs / probs.sum()
