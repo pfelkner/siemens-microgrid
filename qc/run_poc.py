@@ -58,10 +58,10 @@ def main() -> int:
         print(f"p={p:>2}: P(min-cost set) = {probs[min_set].sum():.4f} "
               f"(amplification x{probs[min_set].sum() / uniform_p:.2f})")
 
-    p_final = args.p_values[-1]
+    p_final = max(probs_by_p, key=lambda p: float(probs_by_p[p][min_set].sum()))
     best = sample_best(probs_by_p[p_final], feas, costs, rng, shots=args.shots)
     best_cost = costs[np.where(feas == best)[0][0]]
-    print(f"\nsampled best (p={p_final}, {args.shots} shots): z={best} "
+    print(f"\nsampled best (best p={p_final}, {args.shots} shots): z={best} "
           f"cost={best_cost:.2f} $ (exact optimum {c_min:.2f} $)")
     for t, slot in enumerate(decode(best, inst)):
         print(f"  slot {t} ({'online' if inst.g_avail[t] else 'OUTAGE'}): {slot}")

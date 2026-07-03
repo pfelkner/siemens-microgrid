@@ -51,9 +51,10 @@ def int_to_bits(states: np.ndarray, n_bits: int) -> np.ndarray:
 def structurally_feasible(bits: np.ndarray, inst: Instance) -> np.ndarray:
     """Vectorized structural feasibility over an (N, n_bits) bit matrix -> (N,) bool.
 
-    Encodes exactly what the Grover mixer spans: charge/discharge XOR,
-    import/export XOR, SoC-band one-hot, and the data-driven pinning
-    (no grid flow during outage, no served bit while online).
+    Encodes exactly what the Grover mixer spans: charge/discharge mutual
+    exclusion (at most one), import/export mutual exclusion (at most one),
+    SoC-band one-hot, and the data-driven pinning (no grid flow during
+    outage, no served bit while online).
     """
     ok = np.ones(len(bits), dtype=bool)
     for t in range(inst.T):

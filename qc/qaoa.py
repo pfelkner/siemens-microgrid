@@ -57,11 +57,18 @@ def gm_qaoa(costs: np.ndarray, p: int = 6, gamma_max: float = 4 * np.pi,
     beta_max=pi in the doubled-angle convention).
 
     Defaults calibrated by grid search over gamma_max x p on the test instances:
-      - P(argmin) = 0.0080  on the random-cost instance (seed 7, 10 feasible states)
+      - P(argmin) = 0.0080  on the random-cost instance (seed 7, 486 feasible states)
       - P(min-set) = 0.9888 on the two-level instance (min half of feasible states)
       - p=8 strictly beats p=1 on the seed-3 random instance
     gamma_max=4pi, beta_max=2pi, p=6 is the smallest p that clears all three
     amplification thresholds with the midpoint ramp schedule.
+
+    Inert-layer caveat: with integer-valued normalized costs (e.g. the two-level
+    round-1 case where E ∈ {0, 1}), any layer whose γ_k is a multiple of 2π
+    applies an identity cost phase (inert layer) — with the midpoint ramp and
+    gamma_max=4π this happens at p=1 (γ=2π) and at the middle layer of every
+    odd p; amplification is therefore non-monotone in p (measured: p=6 → 0.989,
+    p=8 → 0.871 on the two-level instance).
     """
     energies = normalize_costs(costs)
     dim = len(energies)
