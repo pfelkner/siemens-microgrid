@@ -94,3 +94,54 @@ def test_y_free_on_outage_slot():
     z1 = state_from_roles([{"b_mid": 1, "y": 1}])
     bits = int_to_bits(np.array([z0, z1]), inst.n_bits)
     assert structurally_feasible(bits, inst).all()
+
+
+from qc.instance import RESILIENCY_PER_SLOT, decode, direct_costs, load_instance
+
+
+def test_direct_costs_only_served_outage_counts():
+    inst = make_instance([1, 0])
+    z_unserved = state_from_roles([{"b_mid": 1}, {"b_mid": 1, "y": 0}])
+    z_served = state_from_roles([{"b_mid": 1}, {"b_mid": 1, "y": 1}])
+    bits = int_to_bits(np.array([z_unserved, z_served]), inst.n_bits)
+    costs = direct_costs(bits, inst)
+    np.testing.assert_allclose(costs, [0.0, -RESILIENCY_PER_SLOT])
+
+
+def test_decode_roundtrip():
+    inst = make_instance([1, 0])
+    slot_roles = [
+        {"ch": 1, "imp": 1, "b_mid": 1},
+        {"dis": 1, "b_low": 1, "y": 1},
+    ]
+    z = state_from_roles(slot_roles)
+    decoded = decode(z, inst)
+    assert len(decoded) == 2
+    for t, want in enumerate(slot_roles):
+        for role in ROLES:
+            assert decoded[t][role] == want.get(role, 0)
+
+
+def test_load_instance_window_and_force_outage(tmp_path):
+    csv = tmp_path / "data.csv"
+    csv.write_text(
+        "timestamp,p_kw,load_kw,tou_usd_kwh,grid_available\n"
+        "2025-06-02 00:00:00,0.0,201.3,-0.25,1\n"
+        "2025-06-02 00:15:00,5.0,198.7,0.10,1\n"
+        "2025-06-02 00:30:00,10.0,190.0,0.30,1\n"
+    )
+    inst = load_instance(csv, start=1, T=2, force_outage=1)
+    assert inst.T == 2
+    np.testing.assert_allclose(inst.p_pv, [5.0, 10.0])
+    np.testing.assert_allclose(inst.tou, [0.10, 0.30])
+    np.testing.assert_array_equal(inst.g_avail, [1, 0])  # forced
+
+
+def test_load_instance_window_too_long_raises(tmp_path):
+    csv = tmp_path / "data.csv"
+    csv.write_text(
+        "timestamp,p_kw,load_kw,tou_usd_kwh,grid_available\n"
+        "2025-06-02 00:00:00,0.0,201.3,-0.25,1\n"
+    )
+    with pytest.raises(ValueError):
+        load_instance(csv, start=0, T=2)

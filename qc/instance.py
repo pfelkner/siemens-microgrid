@@ -67,3 +67,49 @@ def structurally_feasible(bits: np.ndarray, inst: Instance) -> np.ndarray:
         else:
             ok &= (imp == 0) & (exp_ == 0)
     return ok
+
+
+def direct_costs(bits: np.ndarray, inst: Instance) -> np.ndarray:
+    """z-only objective part: -RESILIENCY_PER_SLOT per served outage slot.
+
+    Everything else in the objective (ToU energy, demand charge, export)
+    depends on the continuous x and enters later via Benders cuts.
+    """
+    cost = np.zeros(len(bits), dtype=float)
+    for t in range(inst.T):
+        if inst.g_avail[t] == 0:
+            cost -= RESILIENCY_PER_SLOT * bits[:, bit_index(t, "y")]
+    return cost
+
+
+def decode(state: int, inst: Instance) -> list[dict[str, int]]:
+    """State int -> one {role: bit} dict per slot (input for the later Gurobi subproblem)."""
+    bits = int_to_bits(np.array([state]), inst.n_bits)[0]
+    return [
+        {role: int(bits[bit_index(t, role)]) for role in ROLES}
+        for t in range(inst.T)
+    ]
+
+
+def load_instance(path, start: int = 0, T: int = 2,
+                  force_outage: int | None = None) -> Instance:
+    """Load a T-slot window from the standard data CSV.
+
+    force_outage: optionally pin grid_available[t] = 0 for one window slot —
+    reproducible served-bit for tests/demo when the window has no natural outage.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(path).iloc[start:start + T].reset_index(drop=True)
+    if len(df) < T:
+        raise ValueError(f"window [{start}, {start + T}) exceeds data length {len(df) + start}")
+    g = df["grid_available"].to_numpy(dtype=int)
+    if force_outage is not None:
+        g = g.copy()
+        g[force_outage] = 0
+    return Instance(
+        p_pv=df["p_kw"].to_numpy(dtype=float),
+        p_load=df["load_kw"].to_numpy(dtype=float),
+        tou=df["tou_usd_kwh"].to_numpy(dtype=float),
+        g_avail=g,
+    )
