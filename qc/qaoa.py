@@ -72,3 +72,11 @@ def gm_qaoa(costs: np.ndarray, p: int = 6, gamma_max: float = 4 * np.pi,
         psi = psi - (1.0 - np.exp(-1j * beta)) * psi.mean()  # Grover mixer: I - (1-e^{-i beta})|F><F|
     probs = np.abs(psi) ** 2
     return probs / probs.sum()
+
+
+def sample_best(probs: np.ndarray, feasible_states: np.ndarray, costs: np.ndarray,
+                rng: np.random.Generator, shots: int = 1024) -> int:
+    """Draw shots from the QAOA distribution, return the cheapest sampled state int."""
+    idx = rng.choice(len(probs), size=shots, p=probs)
+    best = idx[np.argmin(costs[idx])]
+    return int(feasible_states[best])

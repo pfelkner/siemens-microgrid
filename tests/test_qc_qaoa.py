@@ -1,6 +1,6 @@
 import numpy as np
 
-from qc.qaoa import gm_qaoa, normalize_costs, ramp_angles
+from qc.qaoa import gm_qaoa, normalize_costs, ramp_angles, sample_best
 
 
 def test_normalize_costs_affine_and_flat():
@@ -51,3 +51,22 @@ def test_more_layers_do_not_hurt_much():
     p1 = gm_qaoa(costs, p=1)[np.argmin(costs)]
     p8 = gm_qaoa(costs, p=8)[np.argmin(costs)]
     assert p8 > p1  # ramp with more layers should amplify more on this instance
+
+
+def test_sample_best_returns_state_int_of_cheapest_sampled():
+    feasible_states = np.array([10, 20, 30], dtype=np.int64)
+    costs = np.array([5.0, -1.0, 3.0])
+    probs = np.array([0.2, 0.5, 0.3])
+    rng = np.random.default_rng(0)
+    best = sample_best(probs, feasible_states, costs, rng, shots=256)
+    assert best == 20  # cheapest state is sampled with p=0.5 -> certain in 256 shots
+
+
+def test_sample_best_finds_optimum_end_to_end():
+    rng = np.random.default_rng(1)
+    dim = 486
+    costs = rng.uniform(0.0, 100.0, size=dim)
+    feasible_states = np.arange(dim, dtype=np.int64) * 7  # arbitrary distinct ints
+    probs = gm_qaoa(costs, p=6)
+    best = sample_best(probs, feasible_states, costs, rng, shots=2048)
+    assert best == feasible_states[np.argmin(costs)]
