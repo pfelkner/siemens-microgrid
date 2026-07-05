@@ -1,0 +1,9 @@
+{
+  "name": "reference-t3",
+  "params": {"eta": 0.9, "soc_init": 120, "dt": 0.25},
+  "slots": [
+    {"pv": 100, "load": 300, "tou": 0.20, "batt": "discharge", "grid": "import", "band": "mid"},
+    {"pv": 400, "load": 200, "tou": 0.08, "batt": "charge",    "grid": "export", "band": "mid"},
+    {"pv": 150, "load": 350, "tou": 0.30, "batt": "discharge", "grid": "import", "band": "mid"}
+  ]
+}

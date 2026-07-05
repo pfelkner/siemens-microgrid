@@ -72,16 +72,84 @@ Es lohnt sich trotzdem, das vorab einmal zu prüfen (erlaubt oder erzwingt), wei
 ## Unsere Aufgaben
 
 1. **Erlaubt/erzwingt-Check (zuerst):** Für jede diskrete Binärvariable klären, ob sie kontinuierliche Aktivität erlaubt oder erzwingt → daraus folgt, ob im Loop überhaupt Feasibility-Cuts anfallen (nur Optimality-Cuts, falls recourse vollständig).
+   → **ERLEDIGT** — Ergebnis in `siemens-microgrid/doc/task1_allow_enforce.md`. Kernbefund: recourse ist **nicht** vollständig → es fallen **Feasibility-Cuts** an (nicht nur Optimality-Cuts). Details unter „Umsetzungsstand".
 2. **Instanz definieren:** PoC klein halten (`T = 2–3`, diskrete Variablen ≤ ~8×3, je nach Hardware / cuQuantum). Die strukturelle diskrete Feasibility exakt benennen (das, was der Mixer kodiert).
 3. **Start-`x`:** Skript, das eine feasible Konfiguration kontinuierlicher Variablen liefert.
+   → **ERLEDIGT** — `siemens-microgrid/feasible_x/feasible_start_x.py` (Sampler) + CLI `scenario_runner.py`. Details unter „Umsetzungsstand".
 4. **Grover-Mixer:** feasible-State-Vektor brute-force bauen (feasibel → 1, sonst 0), Erstellung parallelisieren. 0-Einträge streichen → Mixer wird auf dem Rest trivial all-to-all. Mixer- und Cost-Operator als NumPy-Matrizen.
 5. **Cost-Hamiltonian:** `H_C` diagonal aufbauen als direkte Kosten pro `z` plus punktweises Maximum der bisher gesammelten Optimality-Cuts; je Runde neu berechnen, wenn ein Cut dazukommt.
 6. **QAOA-Durchlauf:** per NumPy-Matrixmultiplikation; QAOA-Winkel für den PoC fest (Ramp-Winkel, kleines `p`) → Lösungsraum → beste Konfiguration `z` samplen.
 7. **Klassischer Solver (Subproblem):** Gurobi-Modell für die kontinuierlichen Variablen bei fixem `z`; Rückgabe von `x*` **und den Dual-Werten**.
+   → **(vorgezogen implementiert)** — `siemens-microgrid/feasible_x/subproblem.py`; siehe „Umsetzungsstand". Formelle Abnahme zusammen mit Aufgabe 8.
 8. **Cut-Bildung + -Integration:** aus den Duals den Benders-Cut konstruieren (Optimality-Cut bei feasiblem, Feasibility-Cut bei infeasiblem Subproblem) und ins Master einarbeiten (Diagonale von `H_C` bzw. feasiblen Zustandsvektor updaten).
 9. **Loop:** die Schritte zu einer Schleife zusammenfügen; Abbruch, wenn untere Master-Schranke und bester Zielwert zusammenfallen (Optimalität) oder Iterationslimit erreicht.
 10. **Simulation Runs + Plots:** 1–2 Runs; Approximation Ratio und Time-to-Solution plotten.
 11. **Vergleich klassisch:** gegen die vollständig klassische Lösung (Gurobi-MILP als Ground Truth) prüfen — Ergebnisse sollten feasibel und einigermaßen gut sein.
+
+---
+
+## Umsetzungsstand (Stand: 05.07.2026)
+
+Der klassische (kontinuierliche) Teil der Pipeline liegt als Python-Paket
+`siemens-microgrid/feasible_x/` vor (eigenes README). Erledigt: Aufgaben **1** und **3**;
+Aufgabe **7** ist bereits mit-implementiert (Abnahme mit Aufgabe 8).
+
+### Aufgabe 1 — Erlaubt/erzwingt-Check (erledigt)
+
+Ergebnis: `doc/task1_allow_enforce.md` (+ Klartext-Erklärung `feasible_x/why_feasibility_cuts.md`).
+Klassifikation der Binärvariablen (Quellen: `classical_solver.py`, `notes/presentations/reductions.tex`):
+
+- **Erlauben** (einseitiges Gate `flow ≤ M·b`, „Fluss = 0" immer zulässig): `b^ch, b^dis, b^imp, b^exp`.
+- **Erzwingen** (fixieren eine kontinuierliche Größe, können infeasibel sein): die SoC-Band-Bits
+  `b^low/b^mid/b^high` (zwingen `E` in ein Intervall) und `y_t` (served → erzwingt exakt gedeckte Outage-Last).
+
+**Kernbefund (relevant für den Loop):** Der recourse ist **nicht vollständig** → es fallen
+**Feasibility-Cuts** an, nicht nur Optimality-Cuts. Grund über `y_t` und die Bänder hinaus:
+die Online-Leistungsbilanz ist eine **Gleichung**, die Aktivitäts-Gates aber nur „höchstens eins"
+(`≤ 1`). Der Master kann daher in einem Defizit-Slot „alles aus" wählen → das LP ist infeasibel.
+**Konsequenz:** Schritt 3 **muss** den Gurobi-infeasibel-Zweig (Farkas → Feasibility-Cut) behandeln;
+die Annahme „nur Optimality-Cuts" trifft für dieses Modell **nicht** zu.
+
+### Aufgabe 3 — Start-`x` (erledigt)
+
+Ergebnis: `feasible_x/feasible_start_x.py`, Funktion `feasible_configs(instance, n, seed)`.
+
+- **Vorgehen:** fixes `z` einsetzen → das LP auf die **freien Batterieleistungen** pro Slot reduzieren
+  (SoC-Trajektorie und Netzflüsse sind daraus abgeleitet, nicht frei), das reduzierte Polytop
+  `G·u ≤ h` aufbauen und diverse feasible Punkte per **Chebyshev-Zentrum + Hit-and-Run** ziehen.
+  Jeder Sample wird gegen Balance/Bounds/Band/Throttle **verifiziert**.
+- Dient zugleich als **Feasibility-Orakel**: hat ein `z` keine kontinuierliche Fortsetzung, wirft es
+  `Infeasible` — genau der Feasibility-Cut-Fall aus Aufgabe 1.
+- **Verifiziert** am Referenzfall `reference-t3` (die T=3-Instanz aus `doc/conversation.md`): alle
+  Samples liegen im handgerechneten reduzierten Polytop (`θ_0 ≤ 72`, SoC-Boden bindet vor der Batterie).
+- `T` ist **nicht** fest verdrahtet (`T = len(pv)`), `Δt = Params.dt` — Instanzgröße frei konfigurierbar.
+
+**Bedienung — `feasible_x/scenario_runner.py` (CLI, kein Code-Editieren nötig):**
+
+- Szenario wählen: `--scenario NAME` (Registry: `reference-t3`, `night-deficit`, `outage-served`,
+  `outage-infeasible`), `--file x.json` (Slot-Schema mit Defaults, Beispiel `sample_t3.json`),
+  oder `--csv all_data.csv --slots N` (diskretes `z` heuristisch gefüllt).
+- `--solve` löst zusätzlich das Subproblem (Aufgabe 7), `--dump out.json|.csv` exportiert **alle**
+  feasiblen Samples, `--save` legt ein editierbares Szenario-Template ab, `--list`, `--selftest`.
+
+> **Hinweis zur Abgrenzung:** Die gesampelten/exportierten Konfigurationen sind feasible **kontinuierliche
+> `x`** (Start-`x`, Schritt 1) — Saat für die Loop-Initialisierung bzw. den Startwert der Restkosten in
+> `H_C`. Sie sind **nicht** die diskreten Zustände des Grover-Mixers (Aufgabe 4); der Mixer enumeriert `z`.
+
+### Aufgabe 7 — Klassischer Solver (Subproblem) — vorgezogen implementiert
+
+Ergebnis: `feasible_x/subproblem.py`, `solve_subproblem(instance)`. Baut das fixe-`z`-LP in Gurobi und
+gibt `x*`, `Q(z)` **und die Duals** zurück; bei infeasiblem LP das **Farkas-Zertifikat** (für den
+Feasibility-Cut). `z` geht **nur über die RHS** ein (fester Constraint-Satz) → die Duals liefern in `z`
+**affine** Benders-Cuts, wie sie Aufgabe 8 braucht. Die Online-Bilanz bleibt bewusst harte **Gleichung**
+(Begründung in `why_feasibility_cuts.md`). **Verifikation** an `reference-t3`: das LP-Optimum trifft die
+handgerechnete Ecke (Batterieleistungen 72/200/162, `Q(z) = 1929.25`); der Infeasibel-Zweig liefert ein
+Farkas-Zertifikat. Formell abgenommen wird das zusammen mit **Aufgabe 8** (Cut-Bildung), die darauf aufsetzt.
+
+### Nächste Schritte
+
+Aufgabe **2** (Instanz/strukturelle `z`-Feasibility exakt), **4** (Grover-Mixer aus feasiblen **`z`**),
+**5** (`H_C`), **8** (Cut-Bildung aus den vorhandenen Duals/Farkas), dann Loop (**9**) und Plots (**10/11**).
 
 ---
 
