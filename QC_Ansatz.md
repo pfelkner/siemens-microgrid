@@ -1,6 +1,6 @@
 # QC-Ansatz: Hybrid Quantum–Classical Microgrid Dispatch
 
-_Stand: 03.07.2026_
+_Stand: 05.07.2026_
 
 ## Überblick
 
@@ -74,11 +74,15 @@ Es lohnt sich trotzdem, das vorab einmal zu prüfen (erlaubt oder erzwingt), wei
 1. **Erlaubt/erzwingt-Check (zuerst):** Für jede diskrete Binärvariable klären, ob sie kontinuierliche Aktivität erlaubt oder erzwingt → daraus folgt, ob im Loop überhaupt Feasibility-Cuts anfallen (nur Optimality-Cuts, falls recourse vollständig).
    → **ERLEDIGT** — Ergebnis in `siemens-microgrid/doc/task1_allow_enforce.md`. Kernbefund: recourse ist **nicht** vollständig → es fallen **Feasibility-Cuts** an (nicht nur Optimality-Cuts). Details unter „Umsetzungsstand".
 2. **Instanz definieren:** PoC klein halten (`T = 2–3`, diskrete Variablen ≤ ~8×3, je nach Hardware / cuQuantum). Die strukturelle diskrete Feasibility exakt benennen (das, was der Mixer kodiert).
+   → **ERLEDIGT** — `qc/instance.py`: `Instance`-Dataclass (`T`, `n_bits` frei konfigurierbar), Bit-Layout `ROLES = (ch, dis, imp, exp, b_low, b_mid, b_high, y)`, vektorisiertes `structurally_feasible()` (XOR-Regeln, SoC-Band One-Hot, Outage-Pinning). Getestet in `tests/test_qc_instance.py`.
 3. **Start-`x`:** Skript, das eine feasible Konfiguration kontinuierlicher Variablen liefert.
    → **ERLEDIGT** — `siemens-microgrid/feasible_x/feasible_start_x.py` (Sampler) + CLI `scenario_runner.py`. Details unter „Umsetzungsstand".
 4. **Grover-Mixer:** feasible-State-Vektor brute-force bauen (feasibel → 1, sonst 0), Erstellung parallelisieren. 0-Einträge streichen → Mixer wird auf dem Rest trivial all-to-all. Mixer- und Cost-Operator als NumPy-Matrizen.
+   → **ERLEDIGT** — `qc/grover_mixer.py` + `qc/instance.py`. Feasible Set via Cartesian Product über Per-Slot-Mengen (O(|F|) statt O(2^{8T})). Mixer als Rank-1-Update in `qc/qaoa.py` — nie als vollständige Matrix materialisiert. Dense-Matrizen in `qc/dense.py` nur für Tests.
 5. **Cost-Hamiltonian:** `H_C` diagonal aufbauen als direkte Kosten pro `z` plus punktweises Maximum der bisher gesammelten Optimality-Cuts; je Runde neu berechnen, wenn ein Cut dazukommt.
+   → **Teilweise erledigt** — `qc/instance.py:direct_costs()` berechnet den z-abhängigen Teil (Resiliency-Bonus) vektorisiert über die feasiblen States. Benders-Cut-Integration in `H_C` (punktweises Maximum über Cuts) folgt mit Aufgabe 8.
 6. **QAOA-Durchlauf:** per NumPy-Matrixmultiplikation; QAOA-Winkel für den PoC fest (Ramp-Winkel, kleines `p`) → Lösungsraum → beste Konfiguration `z` samplen.
+   → **ERLEDIGT** — `qc/qaoa.py`: `gm_qaoa()` (Subspace-Evolution, Ramp-Winkel, `p=6` kalibriert) + `sample_best()`. CLI-Demo `qc/run_poc.py`: QAOA-Verteilung vs. exaktes Optimum, Round-1-Ansicht des Benders-Masters (nur direkte Kosten, noch keine Cuts). Tests in `tests/test_qc_*.py`.
 7. **Klassischer Solver (Subproblem):** Gurobi-Modell für die kontinuierlichen Variablen bei fixem `z`; Rückgabe von `x*` **und den Dual-Werten**.
    → **(vorgezogen implementiert)** — `siemens-microgrid/feasible_x/subproblem.py`; siehe „Umsetzungsstand". Formelle Abnahme zusammen mit Aufgabe 8.
 8. **Cut-Bildung + -Integration:** aus den Duals den Benders-Cut konstruieren (Optimality-Cut bei feasiblem, Feasibility-Cut bei infeasiblem Subproblem) und ins Master einarbeiten (Diagonale von `H_C` bzw. feasiblen Zustandsvektor updaten).
@@ -90,9 +94,9 @@ Es lohnt sich trotzdem, das vorab einmal zu prüfen (erlaubt oder erzwingt), wei
 
 ## Umsetzungsstand (Stand: 05.07.2026)
 
-Der klassische (kontinuierliche) Teil der Pipeline liegt als Python-Paket
-`siemens-microgrid/feasible_x/` vor (eigenes README). Erledigt: Aufgaben **1** und **3**;
-Aufgabe **7** ist bereits mit-implementiert (Abnahme mit Aufgabe 8).
+Klassischer Teil: `feasible_x/` (Aufgaben 1, 3, 7). Quantum-Teil: `qc/` (Aufgaben 2, 4, 6 + Teil 5).
+Erledigt: **1, 2, 3, 4, 6** (vollständig), **5** (z-Teil), **7** (vorgezogen, Abnahme mit 8).
+Offen: **8** (Cut-Integration), **9** (Loop), **10/11** (Plots, Vergleich).
 
 ### Aufgabe 1 — Erlaubt/erzwingt-Check (erledigt)
 
@@ -148,8 +152,7 @@ Farkas-Zertifikat. Formell abgenommen wird das zusammen mit **Aufgabe 8** (Cut-B
 
 ### Nächste Schritte
 
-Aufgabe **2** (Instanz/strukturelle `z`-Feasibility exakt), **4** (Grover-Mixer aus feasiblen **`z`**),
-**5** (`H_C`), **8** (Cut-Bildung aus den vorhandenen Duals/Farkas), dann Loop (**9**) und Plots (**10/11**).
+Aufgabe **8** (Cut-Bildung aus Duals/Farkas in `subproblem.py` → Update `H_C`-Diagonale), dann **9** (Benders-Loop zusammenfügen) und **10/11** (Approximation Ratio + Time-to-Solution, Vergleich gegen Gurobi-MILP).
 
 ---
 
