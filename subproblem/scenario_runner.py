@@ -2,18 +2,18 @@
 
 Pick a scenario three ways and run it, no code editing:
 
-  * prebuilt registry :  uv run python -m feasible_x.scenario_runner --scenario reference-t3
-  * JSON file         :  uv run python -m feasible_x.scenario_runner --file my_scenario.json
-  * CSV slice         :  uv run python -m feasible_x.scenario_runner --csv all_data.csv --slots 4
+  * prebuilt registry :  uv run python -m subproblem.scenario_runner --scenario reference-t3
+  * JSON file         :  uv run python -m subproblem.scenario_runner --file my_scenario.json
+  * CSV slice         :  uv run python -m subproblem.scenario_runner --csv all_data.csv --slots 4
 
 Common invocations:
 
-  uv run python -m feasible_x.scenario_runner --list                          # show prebuilt scenarios
-  uv run python -m feasible_x.scenario_runner --scenario reference-t3 --solve
-  uv run python -m feasible_x.scenario_runner --file my_scenario.json --n 50
-  uv run python -m feasible_x.scenario_runner --csv all_data.csv --slots 4 --solve
-  uv run python -m feasible_x.scenario_runner --scenario night-deficit --save tpl.json   # dump editable template
-  uv run python -m feasible_x.scenario_runner --scenario reference-t3 --n 50 --dump samples.json  # all feasible x
+  uv run python -m subproblem.scenario_runner --list                          # show prebuilt scenarios
+  uv run python -m subproblem.scenario_runner --scenario reference-t3 --solve
+  uv run python -m subproblem.scenario_runner --file my_scenario.json --n 50
+  uv run python -m subproblem.scenario_runner --csv all_data.csv --slots 4 --solve
+  uv run python -m subproblem.scenario_runner --scenario night-deficit --save tpl.json   # dump editable template
+  uv run python -m subproblem.scenario_runner --scenario reference-t3 --n 50 --dump samples.json  # all feasible x
 
 (Run via -m from the repo root so the package imports resolve.)
 
@@ -48,8 +48,8 @@ from pathlib import Path
 
 import numpy as np
 
-from feasible_x.feasible_start_x import Instance, SlotConfig, Params, feasible_configs, verify, Infeasible
-from feasible_x.subproblem import solve_subproblem
+from subproblem.feasible_start_x import Instance, SlotConfig, Params, feasible_configs, verify, Infeasible
+from subproblem.subproblem import solve_subproblem
 
 EPS = 1e-9
 

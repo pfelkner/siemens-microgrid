@@ -40,7 +40,7 @@ import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
 
-from feasible_x.feasible_start_x import Instance, SlotConfig, Params, feasible_configs, verify
+from subproblem.feasible_start_x import Instance, SlotConfig, Params, feasible_configs, verify
 
 
 @dataclass

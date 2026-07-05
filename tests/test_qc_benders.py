@@ -2,8 +2,8 @@
 import numpy as np
 import pytest
 
-from feasible_x.feasible_start_x import Instance as SubInstance, Params, SlotConfig
-from feasible_x.subproblem import solve_subproblem
+from subproblem.feasible_start_x import Instance as SubInstance, Params, SlotConfig
+from subproblem.subproblem import solve_subproblem
 from qc.benders import (FEAS_TOL, Cut, build_sub_instance, feasibility_cut,
                         optimality_cut, to_slot_configs)
 from qc.benders import LoopResult, benders_loop, brute_force_optimum

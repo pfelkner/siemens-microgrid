@@ -24,8 +24,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from feasible_x.feasible_start_x import Instance as SubInstance, Params, SlotConfig
-from feasible_x.subproblem import SubproblemResult, solve_subproblem
+from subproblem.feasible_start_x import Instance as SubInstance, Params, SlotConfig
+from subproblem.subproblem import SubproblemResult, solve_subproblem
 from qc.grover_mixer import enumerate_feasible
 from qc.instance import Instance, bit_index, decode, direct_costs, int_to_bits
 from qc.qaoa import gm_qaoa, sample_best
@@ -59,7 +59,7 @@ def to_slot_configs(state: int, inst: Instance) -> list[SlotConfig]:
 
 def build_sub_instance(inst: Instance, state: int,
                        params: Params | None = None) -> SubInstance:
-    """qc instance + fixed z -> the feasible_x instance the Gurobi subproblem takes."""
+    """qc instance + fixed z -> the subproblem instance the Gurobi subproblem takes."""
     return SubInstance(
         pv=inst.p_pv, load=inst.p_load, grid_available=inst.g_avail,
         config=to_slot_configs(state, inst),

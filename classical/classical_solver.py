@@ -16,7 +16,7 @@ import pandas as pd
 import gurobipy as gp
 from gurobipy import GRB
 
-from scenarios import generate_scenarios
+from .scenarios import generate_scenarios
 
 # ---------- Static parameters ----------
 DT = 0.25                       # h per slot (15 min)

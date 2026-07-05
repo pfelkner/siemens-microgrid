@@ -1,4 +1,4 @@
-# feasible_x — continuous side of the Benders loop
+# subproblem — continuous side of the Benders loop
 
 The classical half of the hybrid microgrid dispatch PoC (`../QC_Ansatz_07-02.md`):
 given a fixed discrete config `z`, produce / solve the continuous variables `x`.
@@ -17,20 +17,20 @@ Requires the project venv (numpy, scipy, gurobipy). Run scripts via `-m` from th
 repo root (`siemens-microgrid/`):
 
 ```bash
-uv run python -m feasible_x.scenario_runner --list
-uv run python -m feasible_x.scenario_runner --scenario reference-t3 --solve
-uv run python -m feasible_x.scenario_runner --file feasible_x/sample_t3.json --solve
-uv run python -m feasible_x.scenario_runner --csv all_data.csv --slots 4 --solve
-uv run python -m feasible_x.scenario_runner --scenario night-deficit --save my.json   # editable template
-uv run python -m feasible_x.scenario_runner --scenario reference-t3 --n 50 --dump samples.json  # export all feasible x (.json or .csv)
-uv run python -m feasible_x.scenario_runner --selftest
+uv run python -m subproblem.scenario_runner --list
+uv run python -m subproblem.scenario_runner --scenario reference-t3 --solve
+uv run python -m subproblem.scenario_runner --file subproblem/sample_t3.json --solve
+uv run python -m subproblem.scenario_runner --csv all_data.csv --slots 4 --solve
+uv run python -m subproblem.scenario_runner --scenario night-deficit --save my.json   # editable template
+uv run python -m subproblem.scenario_runner --scenario reference-t3 --n 50 --dump samples.json  # export all feasible x (.json or .csv)
+uv run python -m subproblem.scenario_runner --selftest
 ```
 
 Each module also self-checks when run directly:
 
 ```bash
-uv run python -m feasible_x.feasible_start_x   # sampler demo (conversation T=3)
-uv run python -m feasible_x.subproblem          # solver demo (feasible + infeasible branch)
+uv run python -m subproblem.feasible_start_x   # sampler demo (conversation T=3)
+uv run python -m subproblem.subproblem          # solver demo (feasible + infeasible branch)
 ```
 
 ## Scenario input

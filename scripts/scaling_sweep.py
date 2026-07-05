@@ -30,12 +30,10 @@ def main() -> int:
         summary_path.unlink()
         print(f"[reset] removed {summary_path}")
 
-    solver = Path(__file__).parent / "classical_solver.py"
-
     for m_sc in args.scenarios:
         for n in args.sizes:
             cmd = [
-                sys.executable, str(solver),
+                sys.executable, "-m", "classical.classical_solver",
                 "--data",         args.data,
                 "--slots",        str(n),
                 "--scenarios",    str(m_sc),

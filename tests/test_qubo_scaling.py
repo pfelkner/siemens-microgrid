@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
-import qubo_model
-from qubo_model import build_qubo, DT, GRID_PMAX, DEMAND_CHARGE, EXCEEDANCE_PENALTY, EXPORT_RATE, RESILIENCY_PER_SLOT, BILLING_SLOTS
+from qubo import qubo_model
+from qubo.qubo_model import build_qubo, DT, GRID_PMAX, DEMAND_CHARGE, EXCEEDANCE_PENALTY, EXPORT_RATE, RESILIENCY_PER_SLOT, BILLING_SLOTS
 
 
 def _single_slot_df(grid_available: int = 1, tou: float = 0.30) -> pd.DataFrame:
