@@ -104,3 +104,130 @@ def feasibility_cut(res: SubproblemResult, z_bits: np.ndarray,
     if v_bar > 0:
         w, const = -w, -const   # normalize: anchor lands on the excluded side
     return Cut(const=float(const), coef=w, kind="feasibility")
+
+
+@dataclass
+class LoopRound:
+    """One Benders round, with master snapshots for visualization."""
+    round: int
+    z: int                      # sampled master state this round
+    status: str                 # subproblem outcome: "optimal" | "infeasible"
+    q: float | None             # Q(z) if feasible
+    direct: float               # direct cost g(z)
+    ub: float                   # best known total after this round
+    lb: float                   # master bound used this round (-inf before first opt cut)
+    gap: float                  # ub - lb at record time
+    n_states: int               # |F| after this round's filtering
+    n_removed: int              # states removed by this round's feasibility cut
+    costs: np.ndarray           # master cost vector this round (over `states`)
+    states: np.ndarray          # feasible states the costs/probs refer to
+    probs: np.ndarray           # QAOA distribution this round
+
+
+@dataclass
+class LoopResult:
+    rounds: list[LoopRound]
+    best_z: int | None
+    best_x: dict | None
+    best_value: float           # UB = direct(best_z) + Q(best_z)
+    lb: float
+    gap: float
+    termination: str            # "gap" | "max_rounds" | "infeasible"
+    cuts: list[Cut]
+
+
+def benders_loop(inst: Instance, params: Params | None = None,
+                 max_rounds: int = 25, gap_tol: float = 1e-4,
+                 shots: int = 1024, seed: int = 0, p: int = 6) -> LoopResult:
+    """The hybrid loop (Task 9): GM-QAOA master <-> Gurobi subproblem via cuts.
+
+    Master cost per round: direct z-costs + pointwise max over all optimality
+    cuts (the eta-free encoding from QC_Ansatz.md). Feasibility cuts filter the
+    state/bit/direct arrays; the Grover mixer over the survivors is implicit.
+    LB is the exact master minimum over the (remaining) enumeration — a valid
+    Benders bound, free at PoC scale; the QAOA stays the (heuristic) sampler.
+    """
+    params = params if params is not None else Params()
+    rng = np.random.default_rng(seed)
+    states = enumerate_feasible(inst)
+    bits = int_to_bits(states, inst.n_bits)
+    direct = direct_costs(bits, inst)
+
+    opt_cuts: list[Cut] = []
+    cuts: list[Cut] = []
+    rounds: list[LoopRound] = []
+    ub, best_z, best_x = np.inf, None, None
+    lb = -np.inf
+    termination = "max_rounds"
+
+    for r in range(1, max_rounds + 1):
+        if len(states) == 0:
+            termination = "infeasible"
+            break
+        if opt_cuts:
+            q_model = np.max(np.stack([c.evaluate(bits) for c in opt_cuts]), axis=0)
+            costs = direct + q_model
+            lb = float(costs.min())
+        else:
+            costs = direct.copy()
+            lb = -np.inf
+        if ub - lb <= gap_tol:
+            termination = "gap"
+            break
+
+        probs = gm_qaoa(costs, p=p)
+        z = sample_best(probs, states, costs, rng, shots=shots)
+        idx = int(np.where(states == z)[0][0])
+
+        res = solve_subproblem(build_sub_instance(inst, z, params))
+        n_removed = 0
+        if res.feasible:
+            cut = optimality_cut(res, bits[idx], inst.n_bits)
+            opt_cuts.append(cut)
+            cuts.append(cut)
+            total = float(direct[idx] + res.q_value)
+            if total < ub:
+                ub, best_z, best_x = total, z, res.x
+        else:
+            cut = feasibility_cut(res, bits[idx], inst.n_bits)
+            if cut is None:
+                warnings.warn(f"degenerate Farkas certificate at z={z}; "
+                              "dropping only this state")
+                keep = states != z
+            else:
+                cuts.append(cut)
+                keep = cut.evaluate(bits) >= -FEAS_TOL
+                assert not keep[idx], "feasibility cut failed to exclude its anchor"
+            n_removed = int((~keep).sum())
+            rounds.append(LoopRound(r, z, res.status, res.q_value, float(direct[idx]),
+                                    ub, lb, ub - lb, int(keep.sum()), n_removed,
+                                    costs, states, probs))
+            states, bits, direct = states[keep], bits[keep], direct[keep]
+            continue
+
+        rounds.append(LoopRound(r, z, res.status, res.q_value, float(direct[idx]),
+                                ub, lb, ub - lb, len(states), 0,
+                                costs, states, probs))
+    else:
+        termination = "max_rounds"
+
+    # final bound with all cuts, over the surviving states
+    if len(states) and opt_cuts:
+        q_model = np.max(np.stack([c.evaluate(bits) for c in opt_cuts]), axis=0)
+        lb = float((direct + q_model).min())
+    return LoopResult(rounds, best_z, best_x, float(ub), lb, float(ub - lb),
+                      termination, cuts)
+
+
+def brute_force_optimum(inst: Instance,
+                        params: Params | None = None) -> tuple[int | None, float, dict | None]:
+    """Exact reference: solve the subproblem for every structurally feasible z."""
+    params = params if params is not None else Params()
+    states = enumerate_feasible(inst)
+    direct = direct_costs(int_to_bits(states, inst.n_bits), inst)
+    best_z, best_v, best_x = None, np.inf, None
+    for s, d in zip(states, direct):
+        res = solve_subproblem(build_sub_instance(inst, int(s), params))
+        if res.feasible and d + res.q_value < best_v:
+            best_z, best_v, best_x = int(s), float(d + res.q_value), res.x
+    return best_z, best_v, best_x

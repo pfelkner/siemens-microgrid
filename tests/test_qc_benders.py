@@ -6,8 +6,11 @@ from feasible_x.feasible_start_x import Instance as SubInstance, Params, SlotCon
 from feasible_x.subproblem import solve_subproblem
 from qc.benders import (FEAS_TOL, Cut, build_sub_instance, feasibility_cut,
                         optimality_cut, to_slot_configs)
+from qc.benders import LoopResult, benders_loop, brute_force_optimum
 from qc.grover_mixer import enumerate_feasible
-from qc.instance import Instance, bit_index, int_to_bits
+from qc.instance import Instance, bit_index, int_to_bits, load_instance
+
+DATA = "artifacts/data/all_data.csv"
 
 
 def _qc_online_t1() -> Instance:
@@ -131,3 +134,36 @@ class TestFeasibilityCut:
         for s in states[excluded]:
             r = solve_subproblem(build_sub_instance(inst, int(s)))
             assert not r.feasible, f"cut wrongly excluded feasible state {int(s)}"
+
+
+class TestLoop:
+    def test_converges_to_brute_force_optimum(self):
+        # T=2 window containing the first natural outage slot (646): 486 states,
+        # feasibility cuts WILL occur (served/band bits force things).
+        inst = load_instance(DATA, start=645, T=2)
+        result = benders_loop(inst, max_rounds=40, gap_tol=1e-4, shots=4096, seed=0)
+        assert result.termination == "gap", \
+            f"no convergence: {result.termination}, gap {result.gap}"
+        z_star, v_star, _ = brute_force_optimum(inst)
+        assert z_star is not None
+        assert result.best_value == pytest.approx(v_star, abs=1e-3)
+        assert result.best_x is not None
+        # UB never below the exact optimum at any point (cut validity end-to-end)
+        assert all(r.ub >= v_star - 1e-6 for r in result.rounds if np.isfinite(r.ub))
+
+    def test_no_outage_window_converges(self):
+        # flat direct costs, online-only: pure optimality-cut regime
+        inst = load_instance(DATA, start=0, T=2)
+        result = benders_loop(inst, max_rounds=40, gap_tol=1e-4, shots=4096, seed=0)
+        assert result.termination == "gap"
+        _, v_star, _ = brute_force_optimum(inst)
+        assert result.best_value == pytest.approx(v_star, abs=1e-3)
+
+    def test_history_is_recorded(self):
+        inst = load_instance(DATA, start=645, T=2)
+        result = benders_loop(inst, max_rounds=40, gap_tol=1e-4, shots=4096, seed=0)
+        assert len(result.rounds) >= 1
+        r1 = result.rounds[0]
+        assert r1.lb == -np.inf                       # no q-model before the first optimality cut
+        assert len(r1.costs) == len(r1.states) == len(r1.probs) == r1.n_states + r1.n_removed
+        assert result.gap <= 1e-4
