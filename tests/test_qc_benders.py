@@ -167,3 +167,13 @@ class TestLoop:
         assert r1.lb == -np.inf                       # no q-model before the first optimality cut
         assert len(r1.costs) == len(r1.states) == len(r1.probs) == r1.n_states + r1.n_removed
         assert result.gap <= 1e-4
+
+
+class TestRunLoopCli:
+    def test_smoke(self, capsys):
+        from qc.run_loop import main
+        rc = main(["--start", "645", "--slots", "2", "--max-rounds", "40",
+                   "--shots", "4096", "--seed", "0"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "termination" in out and "ground truth" in out
