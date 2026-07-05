@@ -138,7 +138,7 @@ class LoopResult:
 
 def benders_loop(inst: Instance, params: Params | None = None,
                  max_rounds: int = 25, gap_tol: float = 1e-4,
-                 shots: int = 1024, seed: int = 0, p: int = 6) -> LoopResult:
+                 shots: int = 1024, seed: int | None = None, p: int = 6) -> LoopResult:
     """The hybrid loop (Task 9): GM-QAOA master <-> Gurobi subproblem via cuts.
 
     Master cost per round: direct z-costs + pointwise max over all optimality
