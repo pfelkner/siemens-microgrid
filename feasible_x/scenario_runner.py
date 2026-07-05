@@ -2,21 +2,20 @@
 
 Pick a scenario three ways and run it, no code editing:
 
-  * prebuilt registry :  python scenario_runner.py --scenario reference-t3
-  * JSON file         :  python scenario_runner.py --file my_scenario.json
-  * CSV slice         :  python scenario_runner.py --csv all_data.csv --slots 4
+  * prebuilt registry :  uv run python -m feasible_x.scenario_runner --scenario reference-t3
+  * JSON file         :  uv run python -m feasible_x.scenario_runner --file my_scenario.json
+  * CSV slice         :  uv run python -m feasible_x.scenario_runner --csv all_data.csv --slots 4
 
 Common invocations:
 
-  python scenario_runner.py --list                          # show prebuilt scenarios
-  python scenario_runner.py --scenario reference-t3 --solve
-  python scenario_runner.py --file my_scenario.json --n 50
-  python scenario_runner.py --csv all_data.csv --slots 4 --solve
-  python scenario_runner.py --scenario night-deficit --save tpl.json   # dump editable template
-  python scenario_runner.py --scenario reference-t3 --n 50 --dump samples.json  # all feasible x
+  uv run python -m feasible_x.scenario_runner --list                          # show prebuilt scenarios
+  uv run python -m feasible_x.scenario_runner --scenario reference-t3 --solve
+  uv run python -m feasible_x.scenario_runner --file my_scenario.json --n 50
+  uv run python -m feasible_x.scenario_runner --csv all_data.csv --slots 4 --solve
+  uv run python -m feasible_x.scenario_runner --scenario night-deficit --save tpl.json   # dump editable template
+  uv run python -m feasible_x.scenario_runner --scenario reference-t3 --n 50 --dump samples.json  # all feasible x
 
-(Run by path from the repo root, e.g. `python feasible_x/scenario_runner.py ...`, so the
-sibling modules resolve.)
+(Run via -m from the repo root so the package imports resolve.)
 
 Add `--solve` to also run the Gurobi subproblem (Task 7) and print Q(z) + duals.
 Use `--list` to see prebuilt names, `--save out.json` to dump the chosen scenario as
@@ -49,8 +48,8 @@ from pathlib import Path
 
 import numpy as np
 
-from feasible_start_x import Instance, SlotConfig, Params, feasible_configs, verify, Infeasible
-from subproblem import solve_subproblem
+from feasible_x.feasible_start_x import Instance, SlotConfig, Params, feasible_configs, verify, Infeasible
+from feasible_x.subproblem import solve_subproblem
 
 EPS = 1e-9
 
