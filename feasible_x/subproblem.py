@@ -50,6 +50,10 @@ class SubproblemResult:
     x: dict | None                    # arrays p_imp,p_exp,p_ch,p_dis,soc + scalar p_peak
     duals: dict[str, float] | None    # constraint name -> dual π (optimal branch)
     farkas: dict[str, float] | None   # constraint name -> Farkas dual (infeasible branch)
+    rhs_affine: dict[str, tuple[float, dict[tuple[int, str], float]]] = None
+    # constraint name -> RHS as an affine function of the bits: (const, {(t, role): coef}).
+    # Role keys are the qc.instance.ROLES names. This is what makes Q(z) = πᵀh(z)
+    # affine in z, so Task 8 can evaluate cuts vectorized over the master's bit matrix.
 
     @property
     def feasible(self) -> bool:
@@ -82,9 +86,12 @@ def solve_subproblem(inst: Instance, quiet: bool = True) -> SubproblemResult:
     peak  = m.addVar(lb=p.peak_floor, ub=p.p_grid_max, name="peak")
 
     duals_of: list[tuple[str, gp.Constr]] = []   # (name, constr) for dual readout
+    rhs_affine: dict[str, tuple[float, dict[tuple[int, str], float]]] = {}
 
-    def add(name: str, constr) -> None:
+    def add(name: str, constr, const: float = 0.0,
+            coefs: dict[tuple[int, str], float] | None = None) -> None:
         duals_of.append((name, m.addConstr(constr, name=name)))
+        rhs_affine[name] = (float(const), dict(coefs or {}))
 
     for t in range(T):
         cfg = inst.config[t]
@@ -98,31 +105,40 @@ def solve_subproblem(inst: Instance, quiet: bool = True) -> SubproblemResult:
         soc_prev = p.soc_init if t == 0 else soc[t - 1]
         # --- SoC dynamics (equality, z-independent) ---
         add(f"soc_dyn_{t}",
-            soc[t] == soc_prev + p.eta * p_ch[t] * p.dt - (p_dis[t] / p.eta) * p.dt)
+            soc[t] == soc_prev + p.eta * p_ch[t] * p.dt - (p_dis[t] / p.eta) * p.dt,
+            const=p.soc_init if t == 0 else 0.0)
 
         # --- SoC band box: z in RHS ---
         ub = p.soc_low_th * bl + p.soc_high_th * bm + p.e_max * bh
         lb = 0.0 * bl + p.soc_low_th * bm + p.soc_high_th * bh
-        add(f"soc_ub_{t}", soc[t] <= ub)
-        add(f"soc_lb_{t}", soc[t] >= lb)
+        band_ub = {(t, "b_low"): p.soc_low_th, (t, "b_mid"): p.soc_high_th,
+                   (t, "b_high"): p.e_max}
+        band_lb = {(t, "b_mid"): p.soc_low_th, (t, "b_high"): p.soc_high_th}
+        add(f"soc_ub_{t}", soc[t] <= ub, coefs=band_ub)
+        add(f"soc_lb_{t}", soc[t] >= lb, coefs=band_lb)
 
         # --- battery throttle (band-dependent cap), z in RHS ---
         max_pow = p.p_bess_nom * (p.frac_edge * (bl + bh) + p.frac_mid * bm)
-        add(f"throt_ch_{t}",  p_ch[t]  <= max_pow)
-        add(f"throt_dis_{t}", p_dis[t] <= max_pow)
+        throttle = {(t, "b_low"): p.p_bess_nom * p.frac_edge,
+                    (t, "b_mid"): p.p_bess_nom * p.frac_mid,
+                    (t, "b_high"): p.p_bess_nom * p.frac_edge}
+        add(f"throt_ch_{t}",  p_ch[t]  <= max_pow, coefs=throttle)
+        add(f"throt_dis_{t}", p_dis[t] <= max_pow, coefs=throttle)
 
         # --- battery on/off gating, z in RHS (bit=0 -> flow pinned to 0) ---
-        add(f"gate_ch_{t}",  p_ch[t]  <= p.p_bess_nom * b_ch)
-        add(f"gate_dis_{t}", p_dis[t] <= p.p_bess_nom * b_dis)
+        add(f"gate_ch_{t}",  p_ch[t]  <= p.p_bess_nom * b_ch,  coefs={(t, "ch"): p.p_bess_nom})
+        add(f"gate_dis_{t}", p_dis[t] <= p.p_bess_nom * b_dis, coefs={(t, "dis"): p.p_bess_nom})
 
         # --- grid on/off gating, z in RHS ---
-        add(f"gate_imp_{t}", p_imp[t] <= p.p_grid_max * b_imp)
-        add(f"gate_exp_{t}", p_exp[t] <= p.p_grid_max * b_exp)
+        add(f"gate_imp_{t}", p_imp[t] <= p.p_grid_max * b_imp, coefs={(t, "imp"): p.p_grid_max})
+        add(f"gate_exp_{t}", p_exp[t] <= p.p_grid_max * b_exp, coefs={(t, "exp"): p.p_grid_max})
 
         if online:
-            # HARD power balance (equality). z-independent.
+            # HARD power balance (equality). z-independent RHS = load - pv (after Gurobi
+            # moves the constant pv term to the RHS).
             add(f"bal_on_{t}",
-                inst.pv[t] + p_imp[t] - p_exp[t] + p_dis[t] - p_ch[t] == inst.load[t])
+                inst.pv[t] + p_imp[t] - p_exp[t] + p_dis[t] - p_ch[t] == inst.load[t],
+                const=inst.load[t] - inst.pv[t])
         else:
             # Outage: no grid exchange (data-fixed, z-independent).
             add(f"no_imp_{t}", p_imp[t] == 0.0)
@@ -132,11 +148,32 @@ def solve_subproblem(inst: Instance, quiet: bool = True) -> SubproblemResult:
             y = 1 if cfg.served else 0
             M_big = max(inst.load[t], p.p_bess_nom + inst.pv[t]) + 1.0
             resid = inst.pv[t] + p_dis[t] - p_ch[t] - inst.load[t]
-            add(f"served_up_{t}",  resid <= M_big * (1 - y))
-            add(f"served_lo_{t}", -resid <= M_big * (1 - y))
+            add(f"served_up_{t}",  resid <= M_big * (1 - y),
+                const=M_big - inst.pv[t] + inst.load[t], coefs={(t, "y"): -M_big})
+            add(f"served_lo_{t}", -resid <= M_big * (1 - y),
+                const=M_big + inst.pv[t] - inst.load[t], coefs={(t, "y"): -M_big})
 
         # --- demand-charge coupling: peak >= import (z-independent) ---
         add(f"peak_{t}", peak >= p_imp[t])
+
+    # Self-check: the affine map evaluated at the fixed z̄ must reproduce Gurobi's
+    # own normalized RHS for every constraint. Catches formula drift immediately.
+    m.update()
+    zb: dict[tuple[int, str], int] = {}
+    for t in range(T):
+        cfg = inst.config[t]
+        bl, bm, bh = _band_bits(cfg.band)
+        zb.update({(t, "ch"): 1 if cfg.batt == "charge" else 0,
+                   (t, "dis"): 1 if cfg.batt == "discharge" else 0,
+                   (t, "imp"): 1 if cfg.grid == "import" else 0,
+                   (t, "exp"): 1 if cfg.grid == "export" else 0,
+                   (t, "b_low"): bl, (t, "b_mid"): bm, (t, "b_high"): bh,
+                   (t, "y"): 1 if cfg.served else 0})
+    for name, c in duals_of:
+        const, coefs = rhs_affine[name]
+        val = const + sum(a * zb[key] for key, a in coefs.items())
+        assert abs(val - c.RHS) <= 1e-6 * max(1.0, abs(c.RHS)), \
+            f"rhs_affine drift at {name}: map gives {val}, model has {c.RHS}"
 
     # ---- objective: continuous cost f(x) ----
     energy = gp.quicksum(tou[t] * p_imp[t] * p.dt for t in range(T))
@@ -159,7 +196,7 @@ def solve_subproblem(inst: Instance, quiet: bool = True) -> SubproblemResult:
             p_peak=float(peak.X),
         )
         duals = {name: float(c.Pi) for name, c in duals_of}
-        return SubproblemResult("optimal", float(m.ObjVal), x, duals, None)
+        return SubproblemResult("optimal", float(m.ObjVal), x, duals, None, rhs_affine)
 
     if m.Status in (GRB.INFEASIBLE, GRB.INF_OR_UNBD):
         # Farkas certificate: the dual ray proving no x satisfies the constraints.
@@ -168,7 +205,7 @@ def solve_subproblem(inst: Instance, quiet: bool = True) -> SubproblemResult:
             farkas = {name: float(c.FarkasDual) for name, c in duals_of}
         except gp.GurobiError:
             farkas = {}                # certificate unavailable (e.g. presolve edge)
-        return SubproblemResult("infeasible", None, None, None, farkas)
+        return SubproblemResult("infeasible", None, None, None, farkas, rhs_affine)
 
     raise RuntimeError(f"unexpected Gurobi status {m.Status}")
 
