@@ -80,13 +80,15 @@ Es lohnt sich trotzdem, das vorab einmal zu prüfen (erlaubt oder erzwingt), wei
 4. **Grover-Mixer:** feasible-State-Vektor brute-force bauen (feasibel → 1, sonst 0), Erstellung parallelisieren. 0-Einträge streichen → Mixer wird auf dem Rest trivial all-to-all. Mixer- und Cost-Operator als NumPy-Matrizen.
    → **ERLEDIGT** — `qc/grover_mixer.py` + `qc/instance.py`. Feasible Set via Cartesian Product über Per-Slot-Mengen (O(|F|) statt O(2^{8T})). Mixer als Rank-1-Update in `qc/qaoa.py` — nie als vollständige Matrix materialisiert. Dense-Matrizen in `qc/dense.py` nur für Tests.
 5. **Cost-Hamiltonian:** `H_C` diagonal aufbauen als direkte Kosten pro `z` plus punktweises Maximum der bisher gesammelten Optimality-Cuts; je Runde neu berechnen, wenn ein Cut dazukommt.
-   → **Teilweise erledigt** — `qc/instance.py:direct_costs()` berechnet den z-abhängigen Teil (Resiliency-Bonus) vektorisiert über die feasiblen States. Benders-Cut-Integration in `H_C` (punktweises Maximum über Cuts) folgt mit Aufgabe 8.
+   → **ERLEDIGT** — `qc/instance.py:direct_costs()` berechnet den z-abhängigen Teil (Resiliency-Bonus) vektorisiert über die feasiblen States. Cut-Integration in `H_C`: punktweises Maximum der Optimality-Cuts über die Bit-Matrix in der Diagonale, implementiert in `qc/benders.py`.
 6. **QAOA-Durchlauf:** per NumPy-Matrixmultiplikation; QAOA-Winkel für den PoC fest (Ramp-Winkel, kleines `p`) → Lösungsraum → beste Konfiguration `z` samplen.
    → **ERLEDIGT** — `qc/qaoa.py`: `gm_qaoa()` (Subspace-Evolution, Ramp-Winkel, `p=6` kalibriert) + `sample_best()`. CLI-Demo `qc/run_poc.py`: QAOA-Verteilung vs. exaktes Optimum, Round-1-Ansicht des Benders-Masters (nur direkte Kosten, noch keine Cuts). Tests in `tests/test_qc_*.py`.
 7. **Klassischer Solver (Subproblem):** Gurobi-Modell für die kontinuierlichen Variablen bei fixem `z`; Rückgabe von `x*` **und den Dual-Werten**.
-   → **(vorgezogen implementiert)** — `siemens-microgrid/feasible_x/subproblem.py`; siehe „Umsetzungsstand". Formelle Abnahme zusammen mit Aufgabe 8.
+   → **ERLEDIGT** — `feasible_x/subproblem.py`, `solve_subproblem(instance)`; `rhs_affine`-Export ergänzt (RHS als affine Funktion der Master-Bits, selbstgeprüft gegen Gurobi-`Constr.RHS` bei jedem Solve). Formelle Abnahme erfolgt.
 8. **Cut-Bildung + -Integration:** aus den Duals den Benders-Cut konstruieren (Optimality-Cut bei feasiblem, Feasibility-Cut bei infeasiblem Subproblem) und ins Master einarbeiten (Diagonale von `H_C` bzw. feasiblen Zustandsvektor updaten).
+   → **ERLEDIGT** — `qc/benders.py`: `optimality_cut` (verankerte Cuts `q(z) ≥ q̄ + w·(z − z̄)` aus Duals × `rhs_affine`), `feasibility_cut` (vorzeichennormalisierte Farkas-Cuts, filtern alle States mit demselben Unlösbarkeits-Beweis aus dem feasiblen Zustandsvektor), vektorisierte Auswertung über die Bit-Matrix; Adapter `to_slot_configs` / `build_sub_instance`.
 9. **Loop:** die Schritte zu einer Schleife zusammenfügen; Abbruch, wenn untere Master-Schranke und bester Zielwert zusammenfallen (Optimalität) oder Iterationslimit erreicht.
+   → **ERLEDIGT** — `qc/benders.py::benders_loop` + CLI `qc/run_loop.py`: ein `z` pro Runde (best-of-shots), Kosten = direkte Kosten + punktweises Maximum der Optimality-Cuts, LB = exaktes Minimum über die verbliebene Enumeration (−∞ bis zum ersten Optimality-Cut), UB = bestes direct+Q, Terminierung nach Gap/max_rounds/infeasibel. `brute_force_optimum` als exakte Referenz.
 10. **Simulation Runs + Plots:** 1–2 Runs; Approximation Ratio und Time-to-Solution plotten.
 11. **Vergleich klassisch:** gegen die vollständig klassische Lösung (Gurobi-MILP als Ground Truth) prüfen — Ergebnisse sollten feasibel und einigermaßen gut sein.
 
@@ -94,9 +96,9 @@ Es lohnt sich trotzdem, das vorab einmal zu prüfen (erlaubt oder erzwingt), wei
 
 ## Umsetzungsstand (Stand: 05.07.2026)
 
-Klassischer Teil: `feasible_x/` (Aufgaben 1, 3, 7). Quantum-Teil: `qc/` (Aufgaben 2, 4, 6 + Teil 5).
-Erledigt: **1, 2, 3, 4, 6** (vollständig), **5** (z-Teil), **7** (vorgezogen, Abnahme mit 8).
-Offen: **8** (Cut-Integration), **9** (Loop), **10/11** (Plots, Vergleich).
+Klassischer Teil: `feasible_x/` (Aufgaben 1, 3, 7). Quantum-Teil: `qc/` (Aufgaben 2, 4–6, 8, 9).
+Erledigt: **1–9** (vollständig).
+Offen: **10/11** (Plots, Vergleich gegen Gurobi-MILP).
 
 ### Aufgabe 1 — Erlaubt/erzwingt-Check (erledigt)
 
@@ -140,7 +142,7 @@ Ergebnis: `feasible_x/feasible_start_x.py`, Funktion `feasible_configs(instance,
 > `x`** (Start-`x`, Schritt 1) — Saat für die Loop-Initialisierung bzw. den Startwert der Restkosten in
 > `H_C`. Sie sind **nicht** die diskreten Zustände des Grover-Mixers (Aufgabe 4); der Mixer enumeriert `z`.
 
-### Aufgabe 7 — Klassischer Solver (Subproblem) — vorgezogen implementiert
+### Aufgabe 7 — Klassischer Solver (Subproblem) — erledigt
 
 Ergebnis: `feasible_x/subproblem.py`, `solve_subproblem(instance)`. Baut das fixe-`z`-LP in Gurobi und
 gibt `x*`, `Q(z)` **und die Duals** zurück; bei infeasiblem LP das **Farkas-Zertifikat** (für den
@@ -148,11 +150,25 @@ Feasibility-Cut). `z` geht **nur über die RHS** ein (fester Constraint-Satz) �
 **affine** Benders-Cuts, wie sie Aufgabe 8 braucht. Die Online-Bilanz bleibt bewusst harte **Gleichung**
 (Begründung in `why_feasibility_cuts.md`). **Verifikation** an `reference-t3`: das LP-Optimum trifft die
 handgerechnete Ecke (Batterieleistungen 72/200/162, `Q(z) = 1929.25`); der Infeasibel-Zweig liefert ein
-Farkas-Zertifikat. Formell abgenommen wird das zusammen mit **Aufgabe 8** (Cut-Bildung), die darauf aufsetzt.
+Farkas-Zertifikat. `rhs_affine`-Export ergänzt (Selbstcheck gegen Gurobi-`Constr.RHS` bei jedem Solve).
+Formelle Abnahme erfolgt.
+
+### Aufgaben 8 + 9 — Cut-Bildung und Loop (erledigt)
+
+Ergebnis: `qc/benders.py` (Cuts + Loop) + CLI `qc/run_loop.py`.
+
+- **Ein `z` pro Runde** (best-of-shots aus dem QAOA-Sample); Kosten = direkte Kosten + punktweises Maximum der bisher gesammelten Optimality-Cuts.
+- **Verankerte Optimality-Cuts** `q(z) ≥ q̄ + w·(z − z̄)`: Gewicht `w` aus Duals × `rhs_affine` (keine Bound-Duals nötig, da `z` nur über die RHS eingeht).
+- **Vorzeichennormalisierte Farkas-Feasibility-Cuts:** filtern alle States mit demselben Unlösbarkeits-Beweis aus dem feasiblen Zustandsvektor; Auswertung vektorisiert über die Bit-Matrix.
+- **LB** = exaktes Minimum über die verbliebene Enumeration (−∞ bis zum ersten Optimality-Cut); **UB** = bestes direct+Q. Terminierung nach Gap / max_rounds / infeasibel.
+- `brute_force_optimum` als exakte Referenz für Tests.
+- `feasible_x/` ist jetzt ein Package (`__init__.py`); Imports package-absolut; Scripts via `uv run python -m feasible_x.scenario_runner`.
+- **Notebook-Visualisierung** (`visualize.ipynb`): Zelle 17 nutzt den echten Cut; neue Loop-Sektion mit Rundentabelle, UB/LB-Konvergenzkurve, Verteilungs-Slider, |F|-Bars und Finale vs. Ground Truth.
+- **Verifiziert:** End-to-end-Test gegen Brute-Force-Optimum (`tests/test_qc_benders.py`). Im Demo-Fenster (T=2, Outage): 5 Farkas-Cuts eliminieren u. a. alle served-States; Optimality-Cuts schließen den Gap in Runde 8 exakt.
 
 ### Nächste Schritte
 
-Aufgabe **8** (Cut-Bildung aus Duals/Farkas in `subproblem.py` → Update `H_C`-Diagonale), dann **9** (Benders-Loop zusammenfügen) und **10/11** (Approximation Ratio + Time-to-Solution, Vergleich gegen Gurobi-MILP).
+Aufgabe **10/11** (Approximation Ratio + Time-to-Solution plotten, Vergleich gegen Gurobi-MILP).
 
 ---
 
