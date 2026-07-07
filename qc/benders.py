@@ -139,10 +139,10 @@ class LoopResult:
 def benders_loop(inst: Instance, params: Params | None = None,
                  max_rounds: int = 25, gap_tol: float = 1e-4,
                  shots: int = 1024, seed: int | None = None, p: int = 6) -> LoopResult:
-    """The hybrid loop (Task 9): GM-QAOA master <-> Gurobi subproblem via cuts.
+    """The hybrid loop: GM-QAOA master <-> Gurobi subproblem via cuts.
 
     Master cost per round: direct z-costs + pointwise max over all optimality
-    cuts (the eta-free encoding from QC_Ansatz.md). Feasibility cuts filter the
+    cuts (eta-free encoding). Feasibility cuts filter the
     state/bit/direct arrays; the Grover mixer over the survivors is implicit.
     LB is the exact master minimum over the (remaining) enumeration — a valid
     Benders bound, free at PoC scale; the QAOA stays the (heuristic) sampler.
