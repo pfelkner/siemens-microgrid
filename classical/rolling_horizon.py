@@ -115,7 +115,7 @@ def simulate_month(
     """Roll a single billing period forward at one committed peak. Returns
     (record dict, implemented-schedule DataFrame)."""
     import pandas as pd
-    from classical_solver import build_and_solve, DT, SOC_INIT
+    from .classical_solver import build_and_solve, DT, SOC_INIT
 
     if window_slots < step_slots:
         raise ValueError("window_slots must be >= step_slots (lookahead >= implemented block)")
@@ -135,7 +135,7 @@ def simulate_month(
         if M == 1:
             df_list = [window_df]
         else:
-            from scenarios import generate_scenarios
+            from .scenarios import generate_scenarios
             df_list = generate_scenarios(window_df, M, seed=scenario_seed + start)
 
         _, _info, scheds = build_and_solve(
@@ -274,7 +274,7 @@ def main() -> int:
 
     import numpy as np
     import pandas as pd
-    import classical_solver as cs
+    from . import classical_solver as cs
 
     df = pd.read_csv(args.data)
     if args.days is not None:

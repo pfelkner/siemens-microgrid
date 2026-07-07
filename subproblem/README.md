@@ -1,4 +1,4 @@
-# feasible_x — continuous side of the Benders loop
+# subproblem — continuous side of the Benders loop
 
 The classical half of the hybrid microgrid dispatch PoC (`../QC_Ansatz_07-02.md`):
 given a fixed discrete config `z`, produce / solve the continuous variables `x`.
@@ -13,24 +13,24 @@ given a fixed discrete config `z`, produce / solve the continuous variables `x`.
 | `why_feasibility_cuts.md` | Plain-language writeup of why this model hits feasibility cuts. |
 | `sample_t3.json` | Example scenario (the T=3 case from `../doc/conversation.md`) for JSON mode. |
 
-Requires the project venv (numpy, scipy, gurobipy). Run scripts by path so the
-sibling modules resolve, e.g. from the repo root (`siemens-microgrid/`):
+Requires the project venv (numpy, scipy, gurobipy). Run scripts via `-m` from the
+repo root (`siemens-microgrid/`):
 
 ```bash
-python feasible_x/scenario_runner.py --list
-python feasible_x/scenario_runner.py --scenario reference-t3 --solve
-python feasible_x/scenario_runner.py --file feasible_x/sample_t3.json --solve
-python feasible_x/scenario_runner.py --csv all_data.csv --slots 4 --solve
-python feasible_x/scenario_runner.py --scenario night-deficit --save my.json   # editable template
-python feasible_x/scenario_runner.py --scenario reference-t3 --n 50 --dump samples.json  # export all feasible x (.json or .csv)
-python feasible_x/scenario_runner.py --selftest
+uv run python -m subproblem.scenario_runner --list
+uv run python -m subproblem.scenario_runner --scenario reference-t3 --solve
+uv run python -m subproblem.scenario_runner --file subproblem/sample_t3.json --solve
+uv run python -m subproblem.scenario_runner --csv all_data.csv --slots 4 --solve
+uv run python -m subproblem.scenario_runner --scenario night-deficit --save my.json   # editable template
+uv run python -m subproblem.scenario_runner --scenario reference-t3 --n 50 --dump samples.json  # export all feasible x (.json or .csv)
+uv run python -m subproblem.scenario_runner --selftest
 ```
 
 Each module also self-checks when run directly:
 
 ```bash
-python feasible_x/feasible_start_x.py   # sampler demo (conversation T=3)
-python feasible_x/subproblem.py         # solver demo (feasible + infeasible branch)
+uv run python -m subproblem.feasible_start_x   # sampler demo (conversation T=3)
+uv run python -m subproblem.subproblem          # solver demo (feasible + infeasible branch)
 ```
 
 ## Scenario input

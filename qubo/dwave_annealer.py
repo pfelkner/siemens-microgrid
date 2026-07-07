@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from qubo_model import SOC_INIT, build_qubo, decode, evaluate
+from .qubo_model import SOC_INIT, build_qubo, decode, evaluate
 
 
 _COLORS = {
@@ -277,7 +277,7 @@ def main() -> int:
     )
     schedule.to_csv(out_schedule, index=False)
 
-    from qubo_model import DEMAND_CHARGE, EXCEEDANCE_PENALTY, EXPORT_RATE
+    from .qubo_model import DEMAND_CHARGE, EXCEEDANCE_PENALTY, EXPORT_RATE
     tou      = df["tou_usd_kwh"].to_numpy()
     energy   = float((tou * schedule["Grid_Import"].to_numpy() * 0.25).sum())
     export   = float((EXPORT_RATE * schedule["Grid_Export"].to_numpy() * 0.25).sum())

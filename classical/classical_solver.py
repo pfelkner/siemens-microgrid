@@ -16,7 +16,7 @@ import pandas as pd
 import gurobipy as gp
 from gurobipy import GRB
 
-from scenarios import generate_scenarios
+from .scenarios import generate_scenarios
 
 # ---------- Static parameters ----------
 DT = 0.25                       # h per slot (15 min)
@@ -79,8 +79,8 @@ def build_and_solve(
     outages = [[t for t in range(T) if g_avail[s][t] == 0] for s in range(M)]
 
     m = gp.Model("microgrid_milp")
-    m.Params.LogFile = log_file
     m.Params.OutputFlag = 0 if quiet else 1
+    m.Params.LogFile = log_file
     m.Params.MIPGap = mip_gap
     if time_limit is not None and time_limit > 0:
         m.Params.TimeLimit = time_limit
