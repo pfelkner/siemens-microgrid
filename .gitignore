@@ -69,5 +69,6 @@ dwave.conf
 # AI Stuff
 CLAUDE.md
 
+graphify-out/
 # Personal working notes (local only, not committed)
 notes/

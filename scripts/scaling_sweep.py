@@ -1,4 +1,4 @@
-"""Run classical_solver.py across a 2D grid of (T, M) and print the summary table."""
+"""Run classical solvers across a 2D grid of (T, M) and print the summary table."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ DEFAULT_SCENARIOS = [1]
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="2D scaling sweep wrapper for classical_solver.py")
+    p = argparse.ArgumentParser(description="2D scaling sweep wrapper for classical MILP solvers")
     p.add_argument("--sizes",     type=int, nargs="+", default=DEFAULT_SIZES)
     p.add_argument("--scenarios", type=int, nargs="+", default=DEFAULT_SCENARIOS,
                    help="Scenario counts to sweep (e.g. --scenarios 1 5 10 25)")
@@ -32,14 +32,16 @@ def main() -> int:
 
     for m_sc in args.scenarios:
         for n in args.sizes:
+            module = "classical.deterministic_solver" if m_sc == 1 else "classical.stochastic_solver"
             cmd = [
-                sys.executable, "-m", "classical.classical_solver",
+                sys.executable, "-m", module,
                 "--data",         args.data,
                 "--slots",        str(n),
-                "--scenarios",    str(m_sc),
                 "--mip-gap",      str(args.mip_gap),
                 "--quiet",
             ]
+            if m_sc > 1:
+                cmd += ["--scenarios", str(m_sc)]
             if args.time_limit is not None:
                 cmd += ["--time-limit", str(args.time_limit)]
             print(f"[sweep] T={n:>4}  M={m_sc:>2}")

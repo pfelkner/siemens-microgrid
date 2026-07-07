@@ -7,7 +7,7 @@ Quantum computing practical — economic dispatch optimization for a New Mexico 
 ```
 siemens-microgrid/
 ├── pv_data.py             # Data synthesis pipeline (PV sim + load + ToU + grid availability)
-├── classical_solver.py    # MILP baseline (PuLP/CBC)
+├── classical/             # deterministic + stochastic Gurobi MILP baselines
 ├── quantum_solver.py      # QUBO build + D-Wave / QAOA backends
 ├── compare.py             # Benchmark + plots between classical and quantum dispatch
 ├── doc/                   # Planning documents and source material
@@ -25,7 +25,8 @@ Currently, none of the solvers are implemented. Only the **`pv_data.py`** works,
 ## Files
 
 - **`pv_data.py`** — Generates the shared input dataset `all_data.csv` at 15-min resolution for a 30-day billing period: physics-based PV simulation via `pvlib` + PVGIS TMY (Albuquerque), synthetic commercial load profile, three-tier PNM-style ToU tariff, and Bernoulli grid-availability draws.
-- **`classical_solver.py`** — Reads `all_data.csv` and builds the MILP dispatch model in PuLP (CBC solver). Produces the reference optimal schedule and cost.
+- **`classical/deterministic_solver.py`** — deterministic Gurobi MILP baseline. Produces the reference optimal schedule and cost for one forecast trajectory.
+- **`classical/stochastic_solver.py`** — stochastic two-stage Gurobi MILP. Shares one `peak_import` across generated scenarios and writes per-scenario plus expected schedules.
 - **`quantum_solver.py`** — Builds the QUBO/Ising reformulation of the same dispatch problem (24-slot horizon, 4-bit power encoding) and solves it on either a D-Wave annealer (`dimod` / Leap hybrid) or QAOA in Qiskit.
 - **`compare.py`** — Runs both solvers on the same reduced problem, computes the approximation ratio ρ = C_quantum / C_MILP, and renders stacked-bar dispatch plots side by side.
 - **`doc/`** — All planning material: the original Siemens one-pager, the classical and quantum implementation plans, and the short presentation overview.
@@ -46,8 +47,11 @@ uv pip install numpy pandas pvlib
 # 1. Synthesize the dataset
 python pv_data.py --start-date 2025-06-01 --end-date 2025-06-30
 
-# 2. Run the classical baseline
-python classical_solver.py #TODO
+# 2. Run the deterministic classical baseline
+python -m classical.deterministic_solver --data artifacts/data/all_data.csv
+
+# 2b. Run the stochastic classical baseline
+python -m classical.stochastic_solver --data artifacts/data/all_data.csv --scenarios 5
 
 # 3. Run the quantum solver
 python quantum_solver.py #TODO

@@ -1,9 +1,9 @@
-# Stochastic DP vs. `classical_solver.py` — how they differ
+# Stochastic DP vs. `classical/stochastic_solver.py` — how they differ
 
 Both solve the **same two-stage stochastic program** (peak cap = first-stage / shared;
 dispatch = second-stage / per-scenario; objective = expected cost). They agree on the
 *model*; they differ entirely in *how the second stage is represented and solved*. The
-new file is `dp_solver_stochastic.py`; the reference is `classical_solver.py`.
+new file is `dp_solver_stochastic.py`; the reference is `classical/stochastic_solver.py`.
 
 > Self-check confirms equivalence at M=1: the stochastic DP reproduces the deterministic
 > DP bit-for-bit, and every scenario schedule is feasible by construction.
@@ -29,7 +29,7 @@ M independent inner solves = **M× shots, not M× qubits**.
 
 ## 2. Side-by-side
 
-| | `classical_solver.py` (MILP) | `dp_solver_stochastic.py` (DP) |
+| | `classical/stochastic_solver.py` (MILP) | `dp_solver_stochastic.py` (DP) |
 |---|---|---|
 | **Scenarios coupled how** | one monolithic MILP with all M second-stages + shared `peak_import` | decoupled: M independent DPs per candidate cap |
 | **First stage (peak)** | a continuous variable Gurobi optimizes | swept over a grid of `peak_levels` candidate caps |
