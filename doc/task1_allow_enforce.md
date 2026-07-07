@@ -13,9 +13,9 @@ produces **feasibility cuts** or only **optimality cuts**.
   (equality / two-sided box). Some `z` then have **no** feasible LP continuation →
   Gurobi reports infeasible → Farkas certificate → **feasibility cut**.
 
-Source of truth: `classical_solver.py` (constraint construction) and
+Source of truth: `classical/deterministic_solver.py` (constraint construction) and
 `notes/presentations/reductions.tex` (the reduced LP). Line refs are to
-`classical_solver.py`.
+`classical/deterministic_solver.py`.
 
 ---
 
