@@ -41,8 +41,9 @@ Inputs (see `Instance` / `SlotConfig` / `Params`)
       batt ∈ {"charge","discharge","idle"}, grid ∈ {"import","export","idle"},
       band ∈ {"low","mid","high"}, served (bool, only used on outage slots).
 * `Params`             : Δt, η, E^max, band thresholds, P^B_nom, P^G_max, fracs,
-                         SoC_init, peak_floor.  Defaults match `classical_solver.py`
-                         (η = √0.9). The demo overrides η = 0.9 to match conversation.md.
+                         SoC_init, peak_floor. Defaults match
+                         `classical/deterministic_solver.py` (η = √0.9). The demo
+                         overrides η = 0.9 to match conversation.md.
 
 Output: list of dicts, each with numpy arrays p_imp, p_exp, p_ch, p_dis, soc and a
 scalar p_peak — a full, verified-feasible continuous configuration.
@@ -65,7 +66,7 @@ EPS = 1e-7
 @dataclass
 class Params:
     dt: float = 0.25                    # h per slot
-    eta: float = math.sqrt(0.9)         # per-direction efficiency (classical_solver default)
+    eta: float = math.sqrt(0.9)         # per-direction efficiency (deterministic_solver default)
     e_max: float = 1000.0               # kWh
     soc_low_th: float = 100.0           # kWh, low/mid band edge
     soc_high_th: float = 900.0          # kWh, mid/high band edge

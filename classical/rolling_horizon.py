@@ -1,7 +1,7 @@
 """Rolling-horizon (MPC) driver with peak-commitment + exceedance penalty + ratchet.
 
 Implements the "commit a peak, pay a penalty if you exceed, ratchet up next month"
-billing on top of the existing MILP (classical_solver.build_and_solve).
+billing on top of the deterministic/stochastic MILP solvers.
 
 How it works
 ------------
@@ -115,7 +115,7 @@ def simulate_month(
     """Roll a single billing period forward at one committed peak. Returns
     (record dict, implemented-schedule DataFrame)."""
     import pandas as pd
-    from .classical_solver import build_and_solve, DT, SOC_INIT
+    from ._milp_core import DT, SOC_INIT
 
     if window_slots < step_slots:
         raise ValueError("window_slots must be >= step_slots (lookahead >= implemented block)")
@@ -134,8 +134,10 @@ def simulate_month(
 
         if M == 1:
             df_list = [window_df]
+            from .deterministic_solver import build_and_solve
         else:
             from .scenarios import generate_scenarios
+            from .stochastic_solver import build_and_solve
             df_list = generate_scenarios(window_df, M, seed=scenario_seed + start)
 
         _, _info, scheds = build_and_solve(
@@ -274,7 +276,7 @@ def main() -> int:
 
     import numpy as np
     import pandas as pd
-    from . import classical_solver as cs
+    from . import deterministic_solver as cs
 
     df = pd.read_csv(args.data)
     if args.days is not None:

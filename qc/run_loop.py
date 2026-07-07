@@ -13,7 +13,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from classical.classical_solver import build_and_solve
+from classical.deterministic_solver import build_and_solve
 from qc.benders import benders_loop
 from qc.instance import decode, load_instance
 

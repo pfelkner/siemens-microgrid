@@ -103,7 +103,7 @@ Offen: **10/11** (Plots, Vergleich gegen Gurobi-MILP).
 ### Aufgabe 1 — Erlaubt/erzwingt-Check (erledigt)
 
 Ergebnis: `doc/task1_allow_enforce.md` (+ Klartext-Erklärung `subproblem/why_feasibility_cuts.md`).
-Klassifikation der Binärvariablen (Quellen: `classical_solver.py`, `notes/presentations/reductions.tex`):
+Klassifikation der Binärvariablen (Quellen: `classical/deterministic_solver.py`, `notes/presentations/reductions.tex`):
 
 - **Erlauben** (einseitiges Gate `flow ≤ M·b`, „Fluss = 0" immer zulässig): `b^ch, b^dis, b^imp, b^exp`.
 - **Erzwingen** (fixieren eine kontinuierliche Größe, können infeasibel sein): die SoC-Band-Bits

@@ -3,7 +3,7 @@
 Builds a `dimod.BinaryQuadraticModel` (BQM) consumed by dwave_annealer.py,
 which solves it via D-Wave simulated annealing in a rolling-window MPC loop.
 
-Core model (vs. classical_solver.py): power balance (B.1), SoC dynamics (B.2),
+Core model (vs. deterministic_solver.py): power balance (B.1), SoC dynamics (B.2),
 box bounds (B.3), peak coupling + demand charge (B.4), SoC-band derating (B.5),
 charge/discharge XOR + import/export XOR (B.6), outage resiliency (B.7), ToU
 energy cost, and export revenue.
@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import dimod
 
-# ---------- Static parameters (mirrors classical_solver.py; not imported to
+# ---------- Static parameters (mirrors deterministic_solver.py; not imported to
 # ---------- avoid the hard gurobipy dependency) ----------
 DT = 0.25                       # h per slot (15 min)
 BESS_CAP = 1000.0               # kWh
