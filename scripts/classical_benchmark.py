@@ -1,7 +1,7 @@
 """Benchmark classical MILP solver across a range of T (time slots).
 
 Produces artifacts/results/classical_scaling.csv with columns:
-  t, n_qubits, runtime_s, mip_gap, status
+  t, n_qubits, runtime_s
 
 n_qubits = 8 * t reflects the QAOA qubit count for the same instance
 (8 binary decisions per slot: ch, dis, imp, exp, b_low, b_mid, b_high, y).
@@ -72,17 +72,15 @@ def main() -> int:
             "t": t,
             "n_qubits": BITS_PER_SLOT * t,
             "runtime_s": float(row["runtime_s"]),
-            "mip_gap": float(row["mip_gap"]),
-            "status": row["status"],
         })
-        print(f"           -> {row['status']}  {float(row['runtime_s']):.3f}s  gap={float(row['mip_gap']):.2e}")
+        print(f"           -> {row['status']}  {float(row['runtime_s']):.3f}s")
 
     if not results:
         print("[benchmark] no results collected")
         return 1
 
     with open(out, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["t", "n_qubits", "runtime_s", "mip_gap", "status"])
+        writer = csv.DictWriter(f, fieldnames=["t", "n_qubits", "runtime_s"])
         writer.writeheader()
         writer.writerows(results)
 
