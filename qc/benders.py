@@ -138,14 +138,13 @@ class LoopResult:
 
 def benders_loop(inst: Instance, params: Params | None = None,
                  max_rounds: int = 25, gap_tol: float = 1e-4,
-                 shots: int = 1024, seed: int | None = None, p: int = 6) -> LoopResult:
+                 shots: int = 1024, seed: int | None = None, p: int = 6,
+                 compute_lb: bool = True) -> LoopResult:
     """The hybrid loop: GM-QAOA master <-> Gurobi subproblem via cuts.
 
     Master cost per round: direct z-costs + pointwise max over all optimality
     cuts (eta-free encoding). Feasibility cuts filter the
     state/bit/direct arrays; the Grover mixer over the survivors is implicit.
-    LB is the exact master minimum over the (remaining) enumeration — a valid
-    Benders bound, free at PoC scale; the QAOA stays the (heuristic) sampler.
     """
     params = params if params is not None else Params()
     rng = np.random.default_rng(seed)
@@ -167,11 +166,11 @@ def benders_loop(inst: Instance, params: Params | None = None,
         if opt_cuts:
             q_model = np.max(np.stack([c.evaluate(bits) for c in opt_cuts]), axis=0)
             costs = direct + q_model
-            lb = float(costs.min())
+            lb = float(costs.min()) if compute_lb else -np.inf
         else:
             costs = direct.copy()
             lb = -np.inf
-        if ub - lb <= gap_tol:
+        if compute_lb and ub - lb <= gap_tol:
             termination = "gap"
             break
 
@@ -212,7 +211,7 @@ def benders_loop(inst: Instance, params: Params | None = None,
         termination = "max_rounds"
 
     # final bound with all cuts, over the surviving states
-    if len(states) and opt_cuts:
+    if compute_lb and len(states) and opt_cuts:
         q_model = np.max(np.stack([c.evaluate(bits) for c in opt_cuts]), axis=0)
         lb = float((direct + q_model).min())
     return LoopResult(rounds, best_z, best_x, float(ub), lb, float(ub - lb),
