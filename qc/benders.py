@@ -139,7 +139,7 @@ class LoopResult:
 def benders_loop(inst: Instance, params: Params | None = None,
                  max_rounds: int = 25, gap_tol: float = 1e-4,
                  shots: int = 1024, seed: int | None = None, p: int = 6,
-                 compute_lb: bool = True) -> LoopResult:
+                 compute_lb: bool = True, use_gpu: bool = False) -> LoopResult:
     """The hybrid loop: GM-QAOA master <-> Gurobi subproblem via cuts.
 
     Master cost per round: direct z-costs + pointwise max over all optimality
@@ -174,7 +174,7 @@ def benders_loop(inst: Instance, params: Params | None = None,
             termination = "gap"
             break
 
-        probs = gm_qaoa(costs, p=p)
+        probs = gm_qaoa(costs, p=p, use_gpu=use_gpu)
         z = sample_best(probs, states, costs, rng, shots=shots)
         idx = int(np.where(states == z)[0][0])
 

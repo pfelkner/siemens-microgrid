@@ -15,6 +15,17 @@ from __future__ import annotations
 
 import numpy as np
 
+try:
+    import cupy as cp  # type: ignore[import]
+    _CUPY_AVAILABLE = True
+except ImportError:
+    cp = None  # type: ignore[assignment]
+    _CUPY_AVAILABLE = False
+
+
+def gpu_available() -> bool:
+    return _CUPY_AVAILABLE
+
 
 def normalize_costs(costs: np.ndarray) -> np.ndarray:
     """Affine map to [0, 1] so the useful gamma scale is dollar-independent.
@@ -42,7 +53,7 @@ def ramp_angles(p: int, gamma_max: float, beta_max: float) -> tuple[np.ndarray, 
 
 
 def gm_qaoa(costs: np.ndarray, p: int = 6, gamma_max: float = 4 * np.pi,
-            beta_max: float = 2 * np.pi) -> np.ndarray:
+            beta_max: float = 2 * np.pi, use_gpu: bool = False) -> np.ndarray:
     """Run GM-QAOA; return |psi|^2 over the feasible states (sums to 1).
 
     Mixer convention (matching qc/dense.py and the design spec):
@@ -69,16 +80,36 @@ def gm_qaoa(costs: np.ndarray, p: int = 6, gamma_max: float = 4 * np.pi,
     gamma_max=4π this happens at p=1 (γ=2π) and at the middle layer of every
     odd p; amplification is therefore non-monotone in p (measured: p=6 → 0.989,
     p=8 → 0.871 on the two-level instance).
+
+    use_gpu: run on GPU via CuPy if available; silently falls back to NumPy.
     """
-    energies = normalize_costs(costs)
-    dim = len(energies)
-    psi = np.full(dim, 1.0 / np.sqrt(dim), dtype=complex)
-    gammas, betas = ramp_angles(p, gamma_max, beta_max)
-    for gamma, beta in zip(gammas, betas):
-        psi = np.exp(-1j * gamma * energies) * psi          # cost phase, elementwise
-        psi = psi - (1.0 - np.exp(-1j * beta)) * psi.mean()  # Grover mixer: I - (1-e^{-i beta})|F><F|
-    probs = np.abs(psi) ** 2
-    return probs / probs.sum()
+    on_gpu = use_gpu and _CUPY_AVAILABLE
+    if use_gpu and not _CUPY_AVAILABLE:
+        import warnings
+        warnings.warn("CuPy not available, falling back to NumPy", stacklevel=2)
+
+    energies_np = normalize_costs(costs)
+    dim = len(energies_np)
+
+    if on_gpu:
+        assert cp is not None
+        energies = cp.asarray(energies_np)
+        psi = cp.full(dim, 1.0 / np.sqrt(dim), dtype=complex)
+        gammas, betas = ramp_angles(p, gamma_max, beta_max)
+        for gamma, beta in zip(gammas, betas):
+            psi = cp.exp(-1j * gamma * energies) * psi           # cost phase, elementwise
+            psi = psi - (1.0 - cp.exp(-1j * beta)) * psi.mean() # Grover mixer
+        probs = cp.abs(psi) ** 2
+        probs = probs / probs.sum()
+        return cp.asnumpy(probs)
+    else:
+        psi = np.full(dim, 1.0 / np.sqrt(dim), dtype=complex)
+        gammas, betas = ramp_angles(p, gamma_max, beta_max)
+        for gamma, beta in zip(gammas, betas):
+            psi = np.exp(-1j * gamma * energies_np) * psi           # cost phase, elementwise
+            psi = psi - (1.0 - np.exp(-1j * beta)) * psi.mean()     # Grover mixer
+        probs = np.abs(psi) ** 2
+        return probs / probs.sum()
 
 
 def sample_best(probs: np.ndarray, feasible_states: np.ndarray, costs: np.ndarray,

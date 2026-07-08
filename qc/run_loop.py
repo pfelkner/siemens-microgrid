@@ -32,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--skip-gurobi", action="store_true",
                     help="skip the Gurobi MILP reference solve")
+    ap.add_argument("--gpu", action="store_true",
+                    help="run QAOA statevector on GPU via CuPy")
     args = ap.parse_args(argv)
 
     inst = load_instance(args.data, start=args.start, T=args.slots,
@@ -39,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"instance: T={inst.T}, n_bits={inst.n_bits}, g_avail={inst.g_avail.tolist()}")
 
     result = benders_loop(inst, max_rounds=args.max_rounds, gap_tol=args.gap_tol,
-                          shots=args.shots, seed=args.seed)
+                          shots=args.shots, seed=args.seed, use_gpu=args.gpu)
 
     zw = inst.n_bits
     print(f"\n{'rnd':>3} {'z':>{zw}} {'subproblem':<11} {'Q(z)':>10} {'UB':>10} "
