@@ -88,8 +88,11 @@ def dispatch(pv, load, grid_available, params: Params, p_star: float) -> Schedul
         if ga[t] == 1:                                       # ---- online ----
             if net < 0:                                      # PV surplus
                 surplus = -net
-                p_ch[t] = min(surplus, p_lim, room)
-                p_exp[t] = min(surplus - p_ch[t], p_grid)
+                # export first (revenue now); charge only what the grid can't absorb.
+                # Charging surplus to hoard it is speculative and, under a cheap peak
+                # charge, a net loss — so it stays at most on par with the passive floor.
+                p_exp[t] = min(surplus, p_grid)
+                p_ch[t] = min(surplus - p_exp[t], p_lim, room)
                 # ponytail: surplus beyond charge+export cap would break the hard
                 # power balance; _demo asserts balance, so bad data fails loudly.
             else:                                            # deficit
