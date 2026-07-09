@@ -42,6 +42,9 @@ from gurobipy import GRB
 
 from subproblem.feasible_start_x import Instance, SlotConfig, Params, feasible_configs, verify
 
+MONTH_SLOTS = 2880  # 30 days * 96 slots; demand charge is a monthly charge,
+#                     prorated to the T-slot window as demand_charge * T/MONTH_SLOTS
+
 
 @dataclass
 class SubproblemResult:
@@ -181,7 +184,7 @@ def solve_subproblem(inst: Instance, quiet: bool = True) -> SubproblemResult:
     if p.peak_mode == "commit_penalty":
         peak_cost = p.penalty_rate * (peak - p.peak_floor)
     else:
-        peak_cost = p.demand_charge * peak
+        peak_cost = p.demand_charge * (T / MONTH_SLOTS) * peak   # prorated monthly charge
     m.setObjective(energy + peak_cost - export, GRB.MINIMIZE)
 
     m.optimize()
@@ -243,7 +246,7 @@ def _demo() -> None:
     def f_of(x):
         e = sum(inst.tou[t] * x["p_imp"][t] * p.dt for t in range(inst.T))
         ex = sum(p.export_rate * x["p_exp"][t] * p.dt for t in range(inst.T))
-        return e + p.demand_charge * x["p_peak"] - ex
+        return e + p.demand_charge * (inst.T / MONTH_SLOTS) * x["p_peak"] - ex
     best_sample = min(f_of(x) for x in sample)
     assert res.q_value <= best_sample + 1e-4, \
         f"LP optimum {res.q_value} worse than a feasible sample {best_sample}"
