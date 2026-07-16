@@ -29,6 +29,12 @@ WINDOW_LABELS = {
     "outage_forced": "Outage\n(forced)",
 }
 
+MILP_COLOR = "black"
+GREEDY_COLOR = "#1E88E5"
+HYBRID_COLOR = "#E53935"
+MEAN_LINE_COLOR = "#26C6DA"
+JITTER = 0.09
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
@@ -46,54 +52,66 @@ def main(argv: list[str] | None = None) -> int:
     x = np.arange(n)
     labels = [WINDOW_LABELS.get(lbl, lbl) for lbl in df["label"]]
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(9, 4.0))
 
-    # Reference lines: passive = 0, MILP = 1
-    ax.axhline(0.0, color="gray", linewidth=1.2, linestyle="--", label="Passive (r = 0)")
-    ax.axhline(1.0, color="black", linewidth=1.2, linestyle="--", label="MILP optimum (r = 1)")
+    # Reference lines
+    ax.axhline(0.0, color="gray", linewidth=1.1, linestyle="--", zorder=1)
+    ax.axhline(1.0, color="black", linewidth=1.1, zorder=1)
 
-    # Greedy per window
-    ax.scatter(x, df["r_greedy"], marker="s", s=70, color="#2196F3",
-               zorder=3, label="Greedy heuristic")
+    # MILP optimum sits at r = 1 by construction; drawn explicitly per window
+    ax.scatter(x - JITTER, np.ones(n), s=55, color=MILP_COLOR, zorder=4)
 
-    # Hybrid per window + std error bars
-    ax.errorbar(x, df["r_hybrid_mean"], yerr=df["r_hybrid_std"],
-                fmt="o", markersize=7, color="#E53935",
-                capsize=4, capthick=1.5, linewidth=1.5,
-                zorder=4, label="GM-QAOA hybrid (mean ± std)")
+    # Greedy heuristic
+    ax.scatter(x, df["r_greedy"], s=55, color=GREEDY_COLOR, zorder=4)
 
-    # Mean lines across windows
+    # GM-QAOA/Benders hybrid
+    ax.errorbar(x + JITTER, df["r_hybrid_mean"], yerr=df["r_hybrid_std"],
+                fmt="o", markersize=7.4, color=HYBRID_COLOR,
+                ecolor=HYBRID_COLOR, capsize=2.5, capthick=1, linewidth=1,
+                alpha=0.9, zorder=3)
+
+    # Greedy mean across windows, annotated in-plot
     r_greedy_mean = df["r_greedy"].mean()
-    r_hybrid_mean = df["r_hybrid_mean"].mean()
-    ax.axhline(r_greedy_mean, color="#2196F3", linewidth=1, linestyle=":",
-               alpha=0.8)
-    ax.axhline(r_hybrid_mean, color="#E53935", linewidth=1, linestyle=":",
-               alpha=0.8)
-
-    # Annotate means on the right margin
-    ax.annotate(f"μ={r_greedy_mean:.3f}", xy=(n - 0.5, r_greedy_mean),
-                xycoords="data", fontsize=8, color="#2196F3",
-                va="center", ha="left")
-    ax.annotate(f"μ={r_hybrid_mean:.3f}", xy=(n - 0.5, r_hybrid_mean),
-                xycoords="data", fontsize=8, color="#E53935",
-                va="center", ha="left")
+    ax.axhline(r_greedy_mean, color=MEAN_LINE_COLOR, linewidth=1.3,
+               linestyle="--", zorder=2)
+    ax.annotate(f"greedy mean r = {r_greedy_mean:.3f}",
+                xy=(n - 1.05, r_greedy_mean), xycoords="data",
+                fontsize=9, color=MEAN_LINE_COLOR, va="bottom", ha="right")
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=9)
-    ax.set_xlim(-0.6, n - 0.1)
-    ax.set_ylim(-0.05, 1.12)
-    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
-    ax.set_ylabel("Normalized approximation ratio  r", fontsize=11)
-    ax.set_xlabel("Window", fontsize=11)
-    ax.set_title("Approximation ratio across T=5 windows\n"
-                 r"$r = (C_\mathrm{ref} - C_\mathrm{method})\;/\;(C_\mathrm{ref} - C_\mathrm{opt})$",
-                 fontsize=11)
-    ax.legend(loc="lower right", fontsize=9)
+    ax.set_xlim(-0.6, n - 0.4)
+    ax.set_ylim(-0.05, 1.08)
+    ax.set_yticks(np.arange(0.0, 1.01, 0.2))
+    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
+    ax.set_ylabel("Normalized approximation ratio  r", fontsize=10.5)
+
+    fig.suptitle("Approximation ratio across T=5 dispatch windows",
+                 fontsize=13, fontweight="bold", y=0.99)
+    ax.set_title(
+        r"$r = (C_{\mathrm{ref}} - C_{\mathrm{method}})\,/\,(C_{\mathrm{ref}} - C^{\star})$",
+        fontsize=10, color="dimgray", pad=8)
+
+    legend_handles = [
+        plt.Line2D([], [], marker="o", linestyle="none", markersize=7.4,
+                   color=MILP_COLOR, label=r"MILP optimum ($C^{\star}$)"),
+        plt.Line2D([], [], marker="o", linestyle="none", markersize=7.4,
+                   color=GREEDY_COLOR, label="Greedy heuristic"),
+        plt.Line2D([], [], marker="o", linestyle="none", markersize=7.4,
+                   color=HYBRID_COLOR, label="GM-QAOA/Benders hybrid"),
+        plt.Line2D([], [], color="gray", linewidth=1.1, linestyle="--",
+                   label="Passive baseline (r = 0)"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower right", fontsize=8.5,
+              framealpha=0.9)
     ax.grid(axis="y", alpha=0.3)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
+    fig.subplots_adjust(top=0.80)
     fig.savefig(out_path, dpi=150)
     print(f"Plot saved -> {out_path}")
     return 0

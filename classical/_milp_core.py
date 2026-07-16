@@ -17,6 +17,8 @@ ETA_RT = 0.90                   # round-trip efficiency
 ETA = math.sqrt(ETA_RT)         # per-direction efficiency
 SOC_INIT = 500.0                # kWh
 DEMAND_CHARGE = 15.0            # $/kW over billing period
+MONTH_SLOTS = 2880             # 30 days * 96 slots; demand charge is a monthly charge,
+#                                prorated to the T-slot window as DEMAND_CHARGE * T/MONTH_SLOTS
 RESILIENCY_PER_MIN = 15.0                       # $/min (band 10-20)
 RESILIENCY_PER_SLOT = RESILIENCY_PER_MIN * 15.0 # $ per served 15-min outage slot = 225.0
 EXPORT_RATE = 0.05                              # $/kWh paid for grid export
@@ -147,7 +149,7 @@ def build_microgrid_milp(
     if peak_mode == "commit_penalty":
         demand_cost = penalty_rate * (peak_import - peak_floor)
     else:
-        demand_cost = DEMAND_CHARGE * peak_import
+        demand_cost = DEMAND_CHARGE * (T / MONTH_SLOTS) * peak_import   # prorated monthly charge
     resiliency_revenue = gp.quicksum(
         probs[s] * resiliency_per_slot * served[s][t]
         for s in range(M) for t in outages[s]
@@ -193,7 +195,7 @@ def build_microgrid_milp(
     if peak_mode == "commit_penalty":
         demand_cost_v = float(penalty_rate * (peak_import.X - peak_floor))
     else:
-        demand_cost_v = float(DEMAND_CHARGE * peak_import.X)
+        demand_cost_v = float(DEMAND_CHARGE * (T / MONTH_SLOTS) * peak_import.X)   # prorated monthly charge
     resiliency_v = float(sum(
         probs[s] * resiliency_per_slot * served[s][t].X
         for s in range(M) for t in outages[s]
