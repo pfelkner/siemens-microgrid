@@ -51,7 +51,7 @@ FIELDS_TSWEEP = [
 ]
 
 FIELDS_RSWEEP = [
-    "t", "n_feasible", "max_rounds",
+    "t", "n_feasible", "max_rounds", "force_outage",
     "cost_classical",
     "cost_quantum_mean", "cost_quantum_std",
     "approx_ratio_mean", "approx_ratio_std",
@@ -63,19 +63,28 @@ FIELDS_RSWEEP = [
 DEFAULT_ROUNDS = [5, 10, 15, 20, 25, 30, 35, 40, 50]
 
 
-def _make_instance(data: pd.DataFrame, start: int, t: int) -> Instance:
+def _make_instance(data: pd.DataFrame, start: int, t: int,
+                   force_outage: int | None = None) -> Instance:
     chunk = data.iloc[start:start + t].reset_index(drop=True)
+    g_avail = chunk["grid_available"].to_numpy(dtype=int)
+    if force_outage is not None:
+        g_avail = g_avail.copy()
+        g_avail[force_outage] = 0
     return Instance(
         p_pv=chunk["p_kw"].to_numpy(dtype=float),
         p_load=chunk["load_kw"].to_numpy(dtype=float),
         tou=chunk["tou_usd_kwh"].to_numpy(dtype=float),
-        g_avail=chunk["grid_available"].to_numpy(dtype=int),
+        g_avail=g_avail,
     )
 
 
-def _gurobi_optimum(data: pd.DataFrame, t: int, start: int) -> tuple[float, float]:
+def _gurobi_optimum(data: pd.DataFrame, t: int, start: int,
+                    force_outage: int | None = None) -> tuple[float, float]:
     """Run Gurobi on the window; return (cost, runtime_s)."""
     window = data.iloc[start:start + t].reset_index(drop=True)
+    if force_outage is not None:
+        window = window.copy()
+        window.loc[force_outage, "grid_available"] = 0
     t0 = time.perf_counter()
     model, _, _ = build_and_solve(
         [window], scenario_probs=None, time_limit=None,
@@ -160,13 +169,14 @@ def run_t(
     t: int, start: int, data: pd.DataFrame,
     trials: int, max_rounds: int, shots: int, p: int,
     use_gpu: bool, random_n: int, seed: int,
+    force_outage: int | None = None,
 ) -> dict:
-    inst = _make_instance(data, start, t)
+    inst = _make_instance(data, start, t, force_outage=force_outage)
     n_feasible = expected_feasible_count(inst)
     vram_mb = n_feasible * 24 / 1024 ** 2
     print(f"  T={t}  |F|={n_feasible:,}  vram≈{vram_mb:.1f} MB", flush=True)
 
-    cost_cl, t_gurobi = _gurobi_optimum(data, t, start)
+    cost_cl, t_gurobi = _gurobi_optimum(data, t, start, force_outage=force_outage)
     print(f"    Gurobi: {cost_cl:.4f} $ in {t_gurobi:.2f}s", flush=True)
 
     rng_base = np.random.default_rng(seed)
@@ -198,13 +208,14 @@ def run_rounds_sweep(
     t: int, start: int, data: pd.DataFrame,
     rounds_list: list[int], trials: int, shots: int, p: int,
     use_gpu: bool, seed: int,
+    force_outage: int | None = None,
 ) -> list[dict]:
-    inst = _make_instance(data, start, t)
+    inst = _make_instance(data, start, t, force_outage=force_outage)
     n_feasible = expected_feasible_count(inst)
     vram_mb = n_feasible * 24 / 1024 ** 2
     print(f"\n  T={t}  |F|={n_feasible:,}  vram≈{vram_mb:.1f} MB", flush=True)
 
-    cost_cl, t_gurobi = _gurobi_optimum(data, t, start)
+    cost_cl, t_gurobi = _gurobi_optimum(data, t, start, force_outage=force_outage)
     print(f"    Gurobi: {cost_cl:.4f} $ in {t_gurobi:.2f}s", flush=True)
 
     rows = []
@@ -224,6 +235,7 @@ def run_rounds_sweep(
             "t": t,
             "n_feasible": n_feasible,
             "max_rounds": max_rounds,
+            "force_outage": force_outage,
             "cost_classical": round(cost_cl, 6),
             "n_trials": trials,
             **stats,
@@ -258,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--rounds-list", type=int, nargs="+", default=DEFAULT_ROUNDS,
                     help="max_rounds values to sweep (default: 5 10 15 20 25 30 35 40 50)")
     ap.add_argument("--out-rounds", default="artifacts/results/qc_rounds_sweep.csv")
+    ap.add_argument("--force-outage", type=int, default=None, metavar="SLOT",
+                    help="pin grid_available[SLOT]=0 inside the window (slot index within window)")
 
     args = ap.parse_args(argv)
     data = pd.read_csv(args.data)
@@ -288,7 +302,8 @@ def _main_tsweep(args: argparse.Namespace, data: pd.DataFrame) -> int:
             try:
                 row = run_t(t=t, start=args.start, data=data, trials=args.trials,
                             max_rounds=args.max_rounds, shots=args.shots, p=args.p,
-                            use_gpu=args.gpu, random_n=args.random_max, seed=args.seed)
+                            use_gpu=args.gpu, random_n=args.random_max, seed=args.seed,
+                            force_outage=args.force_outage)
             except Exception as exc:
                 tb = traceback.format_exc()
                 if "out of memory" in tb.lower() or "oom" in tb.lower():
@@ -318,9 +333,10 @@ def _main_rounds_sweep(args: argparse.Namespace, data: pd.DataFrame) -> int:
     out_path = Path(args.out_rounds)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    outage_str = f", force_outage={args.force_outage}" if args.force_outage is not None else ""
     print(f"QC benchmark (rounds-sweep): T={args.sweep_t}, "
           f"rounds={args.rounds_list}, {args.trials} trials, "
-          f"{'GPU' if args.gpu else 'CPU'}")
+          f"{'GPU' if args.gpu else 'CPU'}{outage_str}")
 
     rows: list[dict] = []
     with open(out_path, "w", newline="") as f:
@@ -331,6 +347,7 @@ def _main_rounds_sweep(args: argparse.Namespace, data: pd.DataFrame) -> int:
                 t=t, start=args.start, data=data,
                 rounds_list=args.rounds_list, trials=args.trials,
                 shots=args.shots, p=args.p, use_gpu=args.gpu, seed=args.seed,
+                force_outage=args.force_outage,
             )
             rows.extend(new_rows)
             for row in new_rows:

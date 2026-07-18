@@ -29,6 +29,8 @@ from qc.instance import RESILIENCY_PER_SLOT
 from subproblem.feasible_start_x import Params
 
 _TOL = 1e-6
+MONTH_SLOTS = 2880  # 30 days * 96 slots; demand charge is a monthly charge,
+#                     prorated to the T-slot window as demand_charge * T/MONTH_SLOTS
 
 
 @dataclass
@@ -86,8 +88,11 @@ def dispatch(pv, load, grid_available, params: Params, p_star: float) -> Schedul
         if ga[t] == 1:                                       # ---- online ----
             if net < 0:                                      # PV surplus
                 surplus = -net
-                p_ch[t] = min(surplus, p_lim, room)
-                p_exp[t] = min(surplus - p_ch[t], p_grid)
+                # export first (revenue now); charge only what the grid can't absorb.
+                # Charging surplus to hoard it is speculative and, under a cheap peak
+                # charge, a net loss — so it stays at most on par with the passive floor.
+                p_exp[t] = min(surplus, p_grid)
+                p_ch[t] = min(surplus - p_exp[t], p_lim, room)
                 # ponytail: surplus beyond charge+export cap would break the hard
                 # power balance; _demo asserts balance, so bad data fails loudly.
             else:                                            # deficit
@@ -135,8 +140,10 @@ def objective(sched: Schedule, tou, params: Params) -> dict:
     """C_energy + C_peak - C_res - C_export (demand-charge peak mode, floor 0)."""
     tou = np.asarray(tou, float)
     dt = params.dt
+    T = len(sched.p_imp)
     c_energy = float(np.sum(tou * sched.p_imp) * dt)
-    c_peak = float(params.demand_charge * np.max(sched.p_imp)) if len(sched.p_imp) else 0.0
+    # demand charge is a monthly charge, prorated to the T-slot window (T/MONTH_SLOTS)
+    c_peak = float(params.demand_charge * (T / MONTH_SLOTS) * np.max(sched.p_imp)) if T else 0.0
     c_export = float(params.export_rate * np.sum(sched.p_exp) * dt)
     c_res = float(RESILIENCY_PER_SLOT * np.sum(sched.served))
     return {
@@ -192,9 +199,10 @@ def _demo() -> None:
     # 1) Hand-computed objective on a trivial 1-slot deficit, P* high (no discharge).
     s = dispatch(pv=[0.0], load=[100.0], grid_available=[1], params=p, p_star=1e9)
     obj = objective(s, tou=[0.10], params=p)
+    peak1 = p.demand_charge * (1 / MONTH_SLOTS) * 100   # T=1 window, prorated
     assert abs(obj["C_energy"] - 0.10 * 100 * p.dt) < 1e-9, obj
-    assert abs(obj["C_peak"] - p.demand_charge * 100) < 1e-9, obj
-    assert abs(obj["total"] - (2.5 + 1500.0)) < 1e-9, obj
+    assert abs(obj["C_peak"] - peak1) < 1e-9, obj
+    assert abs(obj["total"] - (2.5 + peak1)) < 1e-9, obj
     # passive must match here (battery idle either way)
     assert abs(objective(passive([0.0], [100.0], [1], p), [0.10], p)["total"]
                - obj["total"]) < 1e-9
