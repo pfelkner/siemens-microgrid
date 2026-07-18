@@ -169,6 +169,47 @@ class TestLoop:
         assert result.gap <= 1e-4
 
 
+class TestExactSamplerAndTts:
+    def test_shots_to_success_math(self):
+        from qc.qaoa import shots_to_success
+        assert shots_to_success(0.99) == 1.0
+        assert shots_to_success(1.0) == 1.0
+        assert shots_to_success(0.0) == np.inf
+        # 1 - (1-p)^S = 0.99 solved for S at p=0.5 -> log(0.01)/log(0.5)
+        assert shots_to_success(0.5) == pytest.approx(np.log(0.01) / np.log(0.5))
+        with pytest.raises(ValueError):
+            shots_to_success(1.5)
+
+    def test_exact_sampler_is_deterministic(self):
+        inst = load_instance(DATA, start=645, T=2)
+        a = benders_loop(inst, max_rounds=40, sampler="exact", seed=None)
+        b = benders_loop(inst, max_rounds=40, sampler="exact", seed=123)
+        assert [r.z for r in a.rounds] == [r.z for r in b.rounds]
+        assert a.best_value == b.best_value
+
+    def test_exact_sampler_converges_to_optimum(self):
+        inst = load_instance(DATA, start=645, T=2)
+        result = benders_loop(inst, max_rounds=40, sampler="exact")
+        assert result.termination == "gap"
+        _, v_star, _ = brute_force_optimum(inst)
+        assert result.best_value == pytest.approx(v_star, abs=1e-3)
+
+    def test_rounds_record_p_opt_and_shots(self):
+        inst = load_instance(DATA, start=645, T=2)
+        result = benders_loop(inst, max_rounds=40, sampler="exact")
+        for r in result.rounds:
+            assert 0.0 < r.p_opt <= 1.0
+            assert r.shots_99 >= 1.0 and np.isfinite(r.shots_99)
+            # p_opt covers at least the chosen argmin state's own probability
+            i = int(np.where(r.states == r.z)[0][0])
+            assert r.p_opt >= r.probs[i] - 1e-12
+
+    def test_bad_sampler_rejected(self):
+        inst = load_instance(DATA, start=645, T=2)
+        with pytest.raises(ValueError):
+            benders_loop(inst, sampler="argmax")
+
+
 class TestRunLoopCli:
     def test_smoke(self, capsys):
         from qc.run_loop import main
@@ -176,4 +217,4 @@ class TestRunLoopCli:
                    "--shots", "4096", "--seed", "0"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "termination" in out and "ground truth" in out
+        assert "termination" in out and "Gurobi MILP" in out
