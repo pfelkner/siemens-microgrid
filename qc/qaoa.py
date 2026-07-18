@@ -118,3 +118,19 @@ def sample_best(probs: np.ndarray, feasible_states: np.ndarray, costs: np.ndarra
     idx = rng.choice(len(probs), size=shots, p=probs)
     best = idx[np.argmin(costs[idx])]
     return int(feasible_states[best])
+
+
+def shots_to_success(p_opt: float, target: float = 0.99) -> float:
+    """Shots so that best-of-shots hits a master-argmin state w.p. >= target.
+
+    Per-shot success probability p_opt is the total QAOA probability mass on
+    the states attaining the master minimum (ties included — any of them makes
+    best-of-shots succeed). Independent shots: 1 - (1-p_opt)^S >= target.
+    """
+    if not 0.0 <= p_opt <= 1.0:
+        raise ValueError(f"p_opt must be a probability, got {p_opt}")
+    if p_opt == 0.0:
+        return float("inf")
+    if p_opt >= target:
+        return 1.0
+    return float(np.log(1.0 - target) / np.log(1.0 - p_opt))

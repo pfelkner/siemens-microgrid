@@ -28,7 +28,7 @@ from subproblem.feasible_start_x import Instance as SubInstance, Params, SlotCon
 from subproblem.subproblem import SubproblemResult, solve_subproblem
 from qc.grover_mixer import enumerate_feasible
 from qc.instance import Instance, bit_index, decode, direct_costs, int_to_bits
-from qc.qaoa import gm_qaoa, sample_best
+from qc.qaoa import gm_qaoa, sample_best, shots_to_success
 
 FEAS_TOL = 1e-6
 
@@ -122,6 +122,8 @@ class LoopRound:
     costs: np.ndarray           # master cost vector this round (over `states`)
     states: np.ndarray          # feasible states the costs/probs refer to
     probs: np.ndarray           # QAOA distribution this round
+    p_opt: float                # QAOA mass on the master-argmin states (ties incl.)
+    shots_99: float             # shots for 99% best-of-shots success at p_opt
 
 
 @dataclass
@@ -139,13 +141,23 @@ class LoopResult:
 def benders_loop(inst: Instance, params: Params | None = None,
                  max_rounds: int = 25, gap_tol: float = 1e-4,
                  shots: int = 1024, seed: int | None = None, p: int = 6,
-                 compute_lb: bool = True, use_gpu: bool = False) -> LoopResult:
+                 compute_lb: bool = True, use_gpu: bool = False,
+                 sampler: str = "shots") -> LoopResult:
     """The hybrid loop: GM-QAOA master <-> Gurobi subproblem via cuts.
 
     Master cost per round: direct z-costs + pointwise max over all optimality
     cuts (eta-free encoding). Feasibility cuts filter the
     state/bit/direct arrays; the Grover mixer over the survivors is implicit.
+
+    sampler: "shots" (default) samples best-of-`shots` from the QAOA
+    distribution; "exact" takes the exact master argmin — the shots->infinity
+    limit, i.e. classical exact Benders. Deterministic (ties: lowest state
+    index), so the round trajectory is a pure instance/cut property. Either
+    way each round records p_opt (QAOA mass on the argmin states) and
+    shots_99, the TTS ingredients along the trajectory.
     """
+    if sampler not in ("shots", "exact"):
+        raise ValueError(f"sampler must be 'shots' or 'exact', got {sampler!r}")
     params = params if params is not None else Params()
     rng = np.random.default_rng(seed)
     states = enumerate_feasible(inst)
@@ -175,8 +187,15 @@ def benders_loop(inst: Instance, params: Params | None = None,
             break
 
         probs = gm_qaoa(costs, p=p, use_gpu=use_gpu)
-        z = sample_best(probs, states, costs, rng, shots=shots)
-        idx = int(np.where(states == z)[0][0])
+        argmin_mask = costs <= costs.min() + 1e-9
+        p_opt = float(min(probs[argmin_mask].sum(), 1.0))
+        shots_99 = shots_to_success(p_opt)
+        if sampler == "exact":
+            idx = int(np.argmin(costs))
+            z = int(states[idx])
+        else:
+            z = sample_best(probs, states, costs, rng, shots=shots)
+            idx = int(np.where(states == z)[0][0])
 
         res = solve_subproblem(build_sub_instance(inst, z, params))
         n_removed = 0
@@ -200,13 +219,13 @@ def benders_loop(inst: Instance, params: Params | None = None,
             n_removed = int((~keep).sum())
             rounds.append(LoopRound(r, z, res.status, res.q_value, float(direct[idx]),
                                     ub, lb, ub - lb, int(keep.sum()), n_removed,
-                                    costs, states, probs))
+                                    costs, states, probs, p_opt, shots_99))
             states, bits, direct = states[keep], bits[keep], direct[keep]
             continue
 
         rounds.append(LoopRound(r, z, res.status, res.q_value, float(direct[idx]),
                                 ub, lb, ub - lb, len(states), 0,
-                                costs, states, probs))
+                                costs, states, probs, p_opt, shots_99))
     else:
         termination = "max_rounds"
 
@@ -218,15 +237,29 @@ def benders_loop(inst: Instance, params: Params | None = None,
                       termination, cuts)
 
 
-def brute_force_optimum(inst: Instance,
-                        params: Params | None = None) -> tuple[int | None, float, dict | None]:
-    """Exact reference: solve the subproblem for every structurally feasible z."""
+def _solve_state(inst: Instance, state: int, params: Params) -> SubproblemResult:
+    return solve_subproblem(build_sub_instance(inst, state, params))
+
+
+def brute_force_optimum(inst: Instance, params: Params | None = None,
+                        executor=None) -> tuple[int | None, float, dict | None]:
+    """Exact reference: solve the subproblem for every structurally feasible z.
+
+    One Gurobi LP solve per feasible z, embarrassingly parallel across states.
+    Pass a `concurrent.futures.Executor` to fan the solves out across processes
+    (dominant cost at higher T -- |feasible states| grows combinatorially in T).
+    """
     params = params if params is not None else Params()
     states = enumerate_feasible(inst)
     direct = direct_costs(int_to_bits(states, inst.n_bits), inst)
+    states_int = [int(s) for s in states]
+    if executor is not None:
+        results = executor.map(_solve_state, [inst] * len(states_int), states_int,
+                               [params] * len(states_int))
+    else:
+        results = (_solve_state(inst, s, params) for s in states_int)
     best_z, best_v, best_x = None, np.inf, None
-    for s, d in zip(states, direct):
-        res = solve_subproblem(build_sub_instance(inst, int(s), params))
+    for s, d, res in zip(states_int, direct, results):
         if res.feasible and d + res.q_value < best_v:
-            best_z, best_v, best_x = int(s), float(d + res.q_value), res.x
+            best_z, best_v, best_x = s, float(d + res.q_value), res.x
     return best_z, best_v, best_x
